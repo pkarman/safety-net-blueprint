@@ -42,7 +42,7 @@ export function createListHandler(apiMetadata, endpoint) {
   return (req, res) => {
     try {
       // Get database (this will create it if it doesn't exist)
-      const db = getDatabase(apiMetadata.name);
+      const db = getDatabase(endpoint.collectionName || apiMetadata.name);
 
       // Ensure req.query exists
       const queryParams = req.query || {};

@@ -31,13 +31,33 @@ transitions:
         field: assignedToId
         value: $caller.id
         description: Assign task to the claiming worker
+      - type: create
+        entity: task-audit-events
+        description: Record an "assigned" audit event
+        fields:
+          taskId: $object.id
+          eventType: assigned
+          previousValue: $object.status
+          newValue: in_progress
+          performedById: $caller.id
+          occurredAt: $now
 
   - trigger: complete
     from: in_progress
     to: completed
     guards:
       - callerIsAssignedWorker
-    effects: []
+    effects:
+      - type: create
+        entity: task-audit-events
+        description: Record a "completed" audit event
+        fields:
+          taskId: $object.id
+          eventType: completed
+          previousValue: $object.status
+          newValue: completed
+          performedById: $caller.id
+          occurredAt: $now
 
   - trigger: release
     from: in_progress
@@ -49,6 +69,29 @@ transitions:
         field: assignedToId
         value: null
         description: Clear assignment so task returns to queue
+      - type: create
+        entity: task-audit-events
+        description: Record a "returned_to_queue" audit event
+        fields:
+          taskId: $object.id
+          eventType: returned_to_queue
+          previousValue: $object.status
+          newValue: pending
+          performedById: $caller.id
+          occurredAt: $now
+
+onCreate:
+  effects:
+    - type: create
+      entity: task-audit-events
+      description: Record a "created" audit event when a task is first created
+      fields:
+        taskId: $object.id
+        eventType: created
+        previousValue: null
+        newValue: $object.status
+        performedById: $caller.id
+        occurredAt: $now
 
 requestBodies:
   claim: {}

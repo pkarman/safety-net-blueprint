@@ -6,9 +6,9 @@
 
 /**
  * Resolve a value expression against a context.
- * Supports $caller.id references, null, and literal values.
+ * Supports $caller.*, $object.*, $now, null, and literal values.
  * @param {*} value - The value or expression to resolve
- * @param {Object} context - Context with caller info
+ * @param {Object} context - Context with caller, object, and now info
  * @returns {*} Resolved value
  */
 export function resolveValue(value, context) {
@@ -16,9 +16,20 @@ export function resolveValue(value, context) {
     return null;
   }
 
-  if (typeof value === 'string' && value.startsWith('$caller.')) {
-    const field = value.slice('$caller.'.length);
-    return context.caller?.[field] ?? null;
+  if (typeof value === 'string') {
+    if (value === '$now') {
+      return context.now ?? new Date().toISOString();
+    }
+
+    if (value.startsWith('$caller.')) {
+      const field = value.slice('$caller.'.length);
+      return context.caller?.[field] ?? null;
+    }
+
+    if (value.startsWith('$object.')) {
+      const field = value.slice('$object.'.length);
+      return context.object?.[field] ?? null;
+    }
   }
 
   return value;
@@ -126,22 +137,45 @@ export function applySetEffect(effect, resource, context) {
 }
 
 /**
+ * Apply a single create effect — resolves all fields and returns the data to create.
+ * Engine stays pure: no database dependency.
+ * @param {Object} effect - Effect definition with entity and fields
+ * @param {Object} context - Context with caller, object, and now info
+ * @returns {{ entity: string, data: Object }}
+ */
+export function applyCreateEffect(effect, context) {
+  const data = {};
+  for (const [key, value] of Object.entries(effect.fields || {})) {
+    data[key] = resolveValue(value, context);
+  }
+  return { entity: effect.entity, data };
+}
+
+/**
  * Apply all effects of supported types. Skips unimplemented types silently.
  * @param {Array} effects - Array of effect definitions
  * @param {Object} resource - The resource to modify (mutated in place)
  * @param {Object} context - Context with caller info
+ * @returns {{ pendingCreates: Array<{ entity: string, data: Object }> }}
  */
 export function applyEffects(effects, resource, context) {
-  if (!effects) return;
+  const pendingCreates = [];
+
+  if (!effects) return { pendingCreates };
 
   for (const effect of effects) {
     switch (effect.type) {
       case 'set':
         applySetEffect(effect, resource, context);
         break;
+      case 'create':
+        pendingCreates.push(applyCreateEffect(effect, context));
+        break;
       default:
         // Silently skip unimplemented effect types (forward-compatible)
         break;
     }
   }
+
+  return { pendingCreates };
 }

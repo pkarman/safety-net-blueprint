@@ -2,12 +2,12 @@
  * Handler for POST /resources/{id}/{trigger} (state machine transitions)
  */
 
-import { findById, update } from '../database-manager.js';
+import { findById, update, create } from '../database-manager.js';
 import { findTransition, evaluateGuards, applyEffects } from '../state-machine-engine.js';
 
 /**
  * Create a transition handler for an RPC endpoint.
- * @param {string} resourceName - Database resource name (e.g., "workflow")
+ * @param {string} resourceName - Database resource name (e.g., "tasks")
  * @param {Object} stateMachine - The state machine contract
  * @param {string} trigger - Transition trigger name (e.g., "claim")
  * @param {string} paramName - URL parameter name for the resource ID
@@ -46,7 +46,13 @@ export function createTransitionHandler(resourceName, stateMachine, trigger, par
       }
 
       // Evaluate guards
-      const context = { caller: { id: callerId } };
+      const now = new Date().toISOString();
+      const context = {
+        caller: { id: callerId },
+        object: { ...resource },  // Pre-transition snapshot
+        now
+      };
+
       const guardResult = evaluateGuards(
         transition.guards,
         stateMachine.guards || {},
@@ -63,7 +69,7 @@ export function createTransitionHandler(resourceName, stateMachine, trigger, par
 
       // Clone resource, apply effects, update status
       const updated = { ...resource };
-      applyEffects(transition.effects, updated, context);
+      const { pendingCreates } = applyEffects(transition.effects, updated, context);
       updated.status = transition.to;
 
       // Compute diff (only changed fields)
@@ -76,6 +82,16 @@ export function createTransitionHandler(resourceName, stateMachine, trigger, par
 
       // Persist changes
       const result = update(resourceName, resourceId, diff);
+
+      // Execute pending creates (audit events, etc.)
+      for (const { entity, data } of pendingCreates) {
+        try {
+          create(entity, data);
+        } catch (createError) {
+          // Audit failures should not break transitions
+          console.error(`Failed to create ${entity}:`, createError.message);
+        }
+      }
 
       res.json(result);
     } catch (error) {

@@ -29,7 +29,7 @@ export function createCreateHandler(apiMetadata, endpoint, baseUrl) {
         const { valid, errors } = validate(
           req.body, 
           endpoint.requestSchema,
-          `${apiMetadata.name}-create`
+          `${endpoint.collectionName || apiMetadata.name}-create`
         );
         
         if (!valid) {
@@ -38,7 +38,7 @@ export function createCreateHandler(apiMetadata, endpoint, baseUrl) {
       }
       
       // Create resource in database
-      const resource = create(apiMetadata.name, req.body);
+      const resource = create(endpoint.collectionName || apiMetadata.name, req.body);
       
       // Build Location header
       const location = `${baseUrl}${endpoint.path}/${resource.id}`;
