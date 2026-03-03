@@ -75,9 +75,6 @@ function extractIndividualResources(examples) {
 export function seedDatabase(collectionName, specsDir, apiName) {
   const resourceName = apiName || collectionName;
   try {
-    // Clear existing data to ensure a clean state
-    clearAll(collectionName);
-
     const examplesPath = getExamplesPath(resourceName, specsDir);
     
     if (!existsSync(examplesPath)) {
@@ -152,6 +149,22 @@ function deriveCollectionName(api) {
   return api.name;
 }
 
+/**
+ * Derive all unique collection names from an API's endpoints.
+ * @param {Object} api - API metadata object
+ * @returns {string[]} Array of collection names
+ */
+function deriveAllCollectionNames(api) {
+  const names = new Set();
+  for (const endpoint of api.endpoints || []) {
+    const segment = endpoint.path.split('/')[1];
+    if (segment) names.add(segment);
+  }
+  // Fallback for APIs with no endpoints
+  if (names.size === 0) names.add(deriveCollectionName(api));
+  return [...names];
+}
+
 export function seedAllDatabases(apiSpecs, specsDir) {
   console.log('\nSeeding databases from example files...');
 
@@ -159,6 +172,12 @@ export function seedAllDatabases(apiSpecs, specsDir) {
 
   for (const api of apiSpecs) {
     try {
+      // Clear all collections for this API (primary + secondary)
+      for (const name of deriveAllCollectionNames(api)) {
+        clearAll(name);
+      }
+
+      // Seed only the primary collection (which has the examples file)
       const collectionName = deriveCollectionName(api);
       const count = seedDatabase(collectionName, specsDir, api.name);
       summary[collectionName] = count;
