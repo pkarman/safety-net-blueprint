@@ -33,20 +33,13 @@ function convertPathFormat(path) {
 }
 
 /**
- * Derive the database collection name for an endpoint.
- * The primary resource (matching baseResource) uses apiName to stay consistent with seeding.
- * Secondary resources derive from the path segment (e.g., "/task-audit-events" → "task-audit-events").
+ * Derive the database collection name from an endpoint path.
+ * Uses the first path segment (e.g., "/tasks/{taskId}" → "tasks").
  * @param {string} path - OpenAPI path (e.g., "/tasks" or "/task-audit-events/{id}")
- * @param {string} apiName - API name from metadata
- * @param {string} baseResource - The primary collection path (e.g., "/tasks")
  * @returns {string} Collection name for database operations
  */
-function deriveCollectionName(path, apiName, baseResource) {
-  const segment = '/' + path.split('/')[1];
-  if (!baseResource || segment === baseResource) {
-    return apiName;
-  }
-  return path.split('/')[1] || apiName;
+function deriveCollectionName(path) {
+  return path.split('/')[1];
 }
 
 /**
@@ -64,7 +57,7 @@ export function registerRoutes(app, apiMetadata, baseUrl) {
   for (const endpoint of apiMetadata.endpoints) {
     const expressPath = convertPathFormat(endpoint.path);
     const method = endpoint.method.toLowerCase();
-    const collectionName = deriveCollectionName(endpoint.path, apiMetadata.name, apiMetadata.baseResource);
+    const collectionName = deriveCollectionName(endpoint.path);
     const endpointWithCollection = { ...endpoint, collectionName };
 
     let handler = null;
@@ -169,10 +162,8 @@ export function registerStateMachineRoutes(app, stateMachines, apiSpecs) {
     const paramMatch = basePath.match(/\{([^}]+)\}/);
     const paramName = paramMatch ? paramMatch[1] : 'id';
 
-    // Derive collection name for the primary resource
-    const collectionName = deriveCollectionName(
-      itemEndpoint.path, apiSpec.name, apiSpec.baseResource
-    );
+    // Derive collection name from the resource path
+    const collectionName = deriveCollectionName(itemEndpoint.path);
 
     console.log(`  Registering state machine routes for ${sm.domain}/${sm.object}...`);
 

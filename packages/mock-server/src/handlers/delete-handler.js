@@ -17,7 +17,7 @@ export function createDeleteHandler(apiMetadata, endpoint) {
       const resourceId = req.params[paramName] || req.params.id;
 
       // Check if resource exists
-      const existing = findById(endpoint.collectionName || apiMetadata.name, resourceId);
+      const existing = findById(endpoint.collectionName, resourceId);
       if (!existing) {
         return res.status(404).json({
           code: 'NOT_FOUND',
@@ -26,7 +26,7 @@ export function createDeleteHandler(apiMetadata, endpoint) {
       }
       
       // Delete the resource
-      deleteResource(endpoint.collectionName || apiMetadata.name, resourceId);
+      deleteResource(endpoint.collectionName, resourceId);
       
       res.status(204).send();
     } catch (error) {
