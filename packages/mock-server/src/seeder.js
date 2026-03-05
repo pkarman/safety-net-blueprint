@@ -67,46 +67,45 @@ function extractIndividualResources(examples) {
 
 /**
  * Seed database with examples from YAML file
- * @param {string} resourceName - Name of the resource (e.g., 'persons')
+ * @param {string} collectionName - Database collection name (e.g., 'tasks')
  * @param {string} specsDir - Path to specs directory
+ * @param {string} [apiName] - API name for finding the examples file (defaults to collectionName)
  * @returns {number} Number of resources seeded
  */
-export function seedDatabase(resourceName, specsDir) {
+export function seedDatabase(collectionName, specsDir, apiName) {
+  const resourceName = apiName || collectionName;
   try {
-    // Clear existing data to ensure a clean state
-    clearAll(resourceName);
-
     const examplesPath = getExamplesPath(resourceName, specsDir);
     
     if (!existsSync(examplesPath)) {
       console.log(`  No examples file found for ${resourceName}, database will be empty`);
       return 0;
     }
-    
+
     const examples = loadExamples(examplesPath);
-    
+
     if (!examples || Object.keys(examples).length === 0) {
       console.log(`  No examples found in ${resourceName}.yaml, database will be empty`);
       return 0;
     }
-    
+
     const resources = extractIndividualResources(examples);
-    
+
     if (resources.length === 0) {
       console.log(`  No valid resources found in ${resourceName}.yaml examples`);
       return 0;
     }
-    
+
     // Insert each resource with timestamps ensuring proper list order
     // Query orders by createdAt DESC, so Example1 needs the NEWEST timestamp to appear first
     let seededCount = 0;
     const baseTimestamp = new Date('2024-01-01T00:00:00Z').getTime();
-    
+
     for (let i = 0; i < resources.length; i++) {
       try {
         // Create a copy to avoid mutating the original
         const resource = { ...resources[i] };
-        
+
         // Override createdAt/updatedAt to ensure proper ordering
         // Example1 (i=0) gets newest timestamp, Example2 (i=1) gets older, etc.
         // This way when sorted DESC, Example1 appears first
@@ -114,18 +113,18 @@ export function seedDatabase(resourceName, specsDir) {
         const timestamp = new Date(baseTimestamp + minutesOffset).toISOString();
         resource.createdAt = timestamp;
         resource.updatedAt = timestamp;
-        
-        insertResource(resourceName, resource);
+
+        insertResource(collectionName, resource);
         seededCount++;
       } catch (error) {
         console.warn(`  Warning: Could not seed resource ${resources[i].id}:`, error.message);
       }
     }
-    
-    console.log(`  Seeded ${seededCount} ${resourceName} from examples`);
+
+    console.log(`  Seeded ${seededCount} ${collectionName} from examples`);
     return seededCount;
   } catch (error) {
-    console.error(`  Error seeding ${resourceName}:`, error.message);
+    console.error(`  Error seeding ${collectionName}:`, error.message);
     return 0;
   }
 }
@@ -136,6 +135,36 @@ export function seedDatabase(resourceName, specsDir) {
  * @param {string} specsDir - Path to specs directory
  * @returns {Object} Summary of seeded data
  */
+/**
+ * Derive the collection name from an API's baseResource path.
+ * Example: "/tasks" → "tasks", "/persons" → "persons"
+ * Falls back to api.name for APIs without a baseResource.
+ * @param {Object} api - API metadata object
+ * @returns {string} Collection name
+ */
+function deriveCollectionName(api) {
+  if (api.baseResource) {
+    return api.baseResource.split('/')[1];
+  }
+  return api.name;
+}
+
+/**
+ * Derive all unique collection names from an API's endpoints.
+ * @param {Object} api - API metadata object
+ * @returns {string[]} Array of collection names
+ */
+function deriveAllCollectionNames(api) {
+  const names = new Set();
+  for (const endpoint of api.endpoints || []) {
+    const segment = endpoint.path.split('/')[1];
+    if (segment) names.add(segment);
+  }
+  // Fallback for APIs with no endpoints
+  if (names.size === 0) names.add(deriveCollectionName(api));
+  return [...names];
+}
+
 export function seedAllDatabases(apiSpecs, specsDir) {
   console.log('\nSeeding databases from example files...');
 
@@ -143,14 +172,21 @@ export function seedAllDatabases(apiSpecs, specsDir) {
 
   for (const api of apiSpecs) {
     try {
-      const count = seedDatabase(api.name, specsDir);
-      summary[api.name] = count;
+      // Clear all collections for this API (primary + secondary)
+      for (const name of deriveAllCollectionNames(api)) {
+        clearAll(name);
+      }
+
+      // Seed only the primary collection (which has the examples file)
+      const collectionName = deriveCollectionName(api);
+      const count = seedDatabase(collectionName, specsDir, api.name);
+      summary[collectionName] = count;
     } catch (error) {
       console.warn(`  Warning: Could not seed ${api.name}:`, error.message);
       summary[api.name] = 0;
     }
   }
-  
+
   console.log('✓ Database seeding complete\n');
   return summary;
 }

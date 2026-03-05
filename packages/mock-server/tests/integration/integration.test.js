@@ -745,6 +745,188 @@ async function runTests() {
         totalTests++;
       }
     }
+
+    // =========================================================================
+    // Audit Event Integration Tests
+    // =========================================================================
+    console.log(`\n${'='.repeat(70)}`);
+    console.log('Audit Event Integration Tests');
+    console.log('='.repeat(70));
+
+    let auditTaskId = null;
+
+    // Audit Test 1: Create a fresh task for audit testing
+    try {
+      console.log('\n  AUDIT-1. Create a fresh task for audit event tests');
+      const response = await fetch(`${BASE_URL}${taskPath}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Audit test task',
+          description: 'Task for audit event integration tests',
+          status: 'pending'
+        })
+      });
+      if (response.status === 201) {
+        const data = await response.json();
+        auditTaskId = data.id;
+        console.log(`     ✓ PASS: Created task ${auditTaskId}`);
+        totalPassed++;
+      } else {
+        console.log(`     ✗ FAIL: Expected 201, got ${response.status}`);
+        totalFailed++;
+      }
+      totalTests++;
+    } catch (error) {
+      console.log(`     ✗ FAIL: ${error.message}`);
+      totalFailed++;
+      totalTests++;
+    }
+
+    // Audit Test 2: Claim → verify "assigned" audit event
+    if (auditTaskId) {
+      try {
+        console.log(`\n  AUDIT-2. Claim task → verify "assigned" audit event`);
+        await fetch(`${BASE_URL}${taskPath}/${auditTaskId}/claim`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Caller-Id': 'worker-audit-1' }
+        });
+
+        const listResponse = await fetch(`${BASE_URL}/task-audit-events?q=taskId:${auditTaskId}`);
+        const listData = await listResponse.json();
+
+        if (listData.items && listData.items.length === 1) {
+          const event = listData.items[0];
+          if (event.eventType === 'assigned' &&
+              event.taskId === auditTaskId &&
+              event.previousValue === 'pending' &&
+              event.newValue === 'in_progress' &&
+              event.performedById === 'worker-audit-1') {
+            console.log('     ✓ PASS: "assigned" audit event created with correct fields');
+            totalPassed++;
+          } else {
+            console.log(`     ✗ FAIL: Audit event fields incorrect: ${JSON.stringify(event)}`);
+            totalFailed++;
+          }
+        } else {
+          console.log(`     ✗ FAIL: Expected 1 audit event, got ${listData.items?.length ?? 0}`);
+          totalFailed++;
+        }
+        totalTests++;
+      } catch (error) {
+        console.log(`     ✗ FAIL: ${error.message}`);
+        totalFailed++;
+        totalTests++;
+      }
+    }
+
+    // Audit Test 3: Release → verify 2 audit events (assigned + returned_to_queue)
+    if (auditTaskId) {
+      try {
+        console.log(`\n  AUDIT-3. Release task → verify 2 audit events`);
+        await fetch(`${BASE_URL}${taskPath}/${auditTaskId}/release`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Caller-Id': 'worker-audit-1' },
+          body: JSON.stringify({ reason: 'Testing audit events' })
+        });
+
+        const listResponse = await fetch(`${BASE_URL}/task-audit-events?q=taskId:${auditTaskId}`);
+        const listData = await listResponse.json();
+
+        if (listData.items && listData.items.length === 2) {
+          const types = listData.items.map(e => e.eventType).sort();
+          if (types.includes('assigned') && types.includes('returned_to_queue')) {
+            console.log('     ✓ PASS: 2 audit events (assigned + returned_to_queue)');
+            totalPassed++;
+          } else {
+            console.log(`     ✗ FAIL: Unexpected event types: ${types.join(', ')}`);
+            totalFailed++;
+          }
+        } else {
+          console.log(`     ✗ FAIL: Expected 2 audit events, got ${listData.items?.length ?? 0}`);
+          totalFailed++;
+        }
+        totalTests++;
+      } catch (error) {
+        console.log(`     ✗ FAIL: ${error.message}`);
+        totalFailed++;
+        totalTests++;
+      }
+    }
+
+    // Audit Test 4: Claim again + complete → verify 4 total audit events
+    if (auditTaskId) {
+      try {
+        console.log(`\n  AUDIT-4. Claim + complete → verify 4 total audit events`);
+        await fetch(`${BASE_URL}${taskPath}/${auditTaskId}/claim`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Caller-Id': 'worker-audit-1' }
+        });
+        await fetch(`${BASE_URL}${taskPath}/${auditTaskId}/complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Caller-Id': 'worker-audit-1' },
+          body: JSON.stringify({ outcome: 'approved' })
+        });
+
+        const listResponse = await fetch(`${BASE_URL}/task-audit-events?q=taskId:${auditTaskId}`);
+        const listData = await listResponse.json();
+
+        if (listData.items && listData.items.length === 4) {
+          const types = listData.items.map(e => e.eventType).sort();
+          if (types.includes('assigned') && types.includes('completed') && types.includes('returned_to_queue')) {
+            console.log('     ✓ PASS: 4 audit events total');
+            totalPassed++;
+          } else {
+            console.log(`     ✗ FAIL: Unexpected event types: ${types.join(', ')}`);
+            totalFailed++;
+          }
+        } else {
+          console.log(`     ✗ FAIL: Expected 4 audit events, got ${listData.items?.length ?? 0}`);
+          totalFailed++;
+        }
+        totalTests++;
+      } catch (error) {
+        console.log(`     ✗ FAIL: ${error.message}`);
+        totalFailed++;
+        totalTests++;
+      }
+    }
+
+    // Audit Test 5: GET single audit event by ID
+    if (auditTaskId) {
+      try {
+        console.log(`\n  AUDIT-5. GET single audit event by ID`);
+        const listResponse = await fetch(`${BASE_URL}/task-audit-events?q=taskId:${auditTaskId}`);
+        const listData = await listResponse.json();
+
+        if (listData.items && listData.items.length > 0) {
+          const eventId = listData.items[0].id;
+          const getResponse = await fetch(`${BASE_URL}/task-audit-events/${eventId}`);
+
+          if (getResponse.status === 200) {
+            const event = await getResponse.json();
+            if (event.id === eventId && event.taskId === auditTaskId && event.occurredAt) {
+              console.log(`     ✓ PASS: GET /task-audit-events/${eventId} returns correct event`);
+              totalPassed++;
+            } else {
+              console.log(`     ✗ FAIL: Event fields incorrect`);
+              totalFailed++;
+            }
+          } else {
+            console.log(`     ✗ FAIL: Expected 200, got ${getResponse.status}`);
+            totalFailed++;
+          }
+        } else {
+          console.log('     ✗ FAIL: No audit events to test GET by ID');
+          totalFailed++;
+        }
+        totalTests++;
+      } catch (error) {
+        console.log(`     ✗ FAIL: ${error.message}`);
+        totalFailed++;
+        totalTests++;
+      }
+    }
   }
 
   // Multi-API test: Verify all APIs are accessible

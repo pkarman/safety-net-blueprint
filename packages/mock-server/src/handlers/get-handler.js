@@ -16,7 +16,7 @@ export function createGetHandler(apiMetadata, endpoint) {
     try {
       const resourceId = req.params[paramName] || req.params.id;
 
-      const resource = findById(apiMetadata.name, resourceId);
+      const resource = findById(endpoint.collectionName, resourceId);
 
       if (!resource) {
         return res.status(404).json({

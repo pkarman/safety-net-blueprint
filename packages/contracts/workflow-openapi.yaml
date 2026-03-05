@@ -27,6 +27,8 @@ servers:
 tags:
   - name: Tasks
     description: Manage workflow tasks.
+  - name: Task Audit Events
+    description: Read-only audit trail for task state transitions.
 
 paths:
   "/tasks":
@@ -151,6 +153,51 @@ paths:
         "500":
           $ref: "./components/responses.yaml#/InternalError"
 
+  "/task-audit-events":
+    get:
+      summary: List task audit events
+      description: Retrieve a paginated list of task audit events.
+      operationId: listTaskAuditEvents
+      tags:
+        - Task Audit Events
+      parameters:
+        - $ref: "./components/parameters.yaml#/SearchQueryParam"
+        - $ref: "./components/parameters.yaml#/LimitParam"
+        - $ref: "./components/parameters.yaml#/OffsetParam"
+      responses:
+        "200":
+          description: A paginated collection of task audit events.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAuditEventList"
+        "400":
+          $ref: "./components/responses.yaml#/BadRequest"
+        "500":
+          $ref: "./components/responses.yaml#/InternalError"
+
+  "/task-audit-events/{taskAuditEventId}":
+    parameters:
+      - $ref: "#/components/parameters/TaskAuditEventIdParam"
+
+    get:
+      summary: Get a task audit event
+      description: Retrieve a single task audit event by identifier.
+      operationId: getTaskAuditEvent
+      tags:
+        - Task Audit Events
+      responses:
+        "200":
+          description: Task audit event retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskAuditEvent"
+        "404":
+          $ref: "./components/responses.yaml#/NotFound"
+        "500":
+          $ref: "./components/responses.yaml#/InternalError"
+
 components:
   parameters:
     TaskIdParam:
@@ -162,6 +209,16 @@ components:
         type: string
         format: uuid
       example: d4e5f6a7-b8c9-0d1e-2f3a-4b5c6d7e8f90
+
+    TaskAuditEventIdParam:
+      name: taskAuditEventId
+      in: path
+      required: true
+      description: Unique identifier of the task audit event.
+      schema:
+        type: string
+        format: uuid
+      example: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 
   schemas:
     Task:
@@ -244,6 +301,94 @@ components:
 
             Note: id, createdAt, and updatedAt are server-generated (readOnly) and cannot be updated.
           minProperties: 1
+
+    TaskAuditEvent:
+      type: object
+      description: An immutable record of a task state transition.
+      additionalProperties: false
+      required:
+        - id
+        - taskId
+        - eventType
+        - occurredAt
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique identifier for the audit event.
+          readOnly: true
+        taskId:
+          type: string
+          format: uuid
+          description: Reference to the task that transitioned.
+        eventType:
+          type: string
+          enum:
+            - created
+            - assigned
+            - completed
+            - returned_to_queue
+          description: The type of lifecycle event.
+        previousValue:
+          type: string
+          description: The status before the transition.
+        newValue:
+          type: string
+          description: The status after the transition.
+        performedById:
+          type: string
+          format: uuid
+          description: Reference to the user who triggered the transition.
+        reason:
+          type: string
+          description: Optional reason provided for the transition.
+        occurredAt:
+          type: string
+          format: date-time
+          description: When the transition occurred.
+        createdAt:
+          type: string
+          format: date-time
+          description: Timestamp when the audit event was created.
+          readOnly: true
+        updatedAt:
+          type: string
+          format: date-time
+          description: Timestamp when the audit event was last updated.
+          readOnly: true
+
+    TaskAuditEventList:
+      type: object
+      description: Paginated list of task audit events.
+      additionalProperties: false
+      required:
+        - items
+        - total
+        - limit
+        - offset
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/TaskAuditEvent"
+        total:
+          type: integer
+          minimum: 0
+          description: Total number of task audit events available.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          description: Maximum number of task audit events requested.
+        offset:
+          type: integer
+          minimum: 0
+          description: Number of items skipped before the current page.
+        hasNext:
+          type: boolean
+          description: Indicates whether more task audit events are available beyond the current page.
 
     TaskList:
       type: object

@@ -1,6 +1,6 @@
 # Workflow Domain
 
-> **Status:** Task API implemented (alpha). Additional fields, entities, and behavioral artifacts are future work. The [workflow prototype](../../prototypes/workflow-prototype.md) proves a subset of these patterns (3 states, 3 transitions).
+> **Status:** Task and TaskAuditEvent APIs implemented (alpha). State machine engine supports transitions, guards, `set` and `create` effects. Additional fields, entities, and behavioral artifacts (rules, metrics, events) are future work. The [workflow prototype](../../prototypes/workflow-prototype.md) designs the full set of patterns.
 
 See [Domain Design Overview](../domain-design.md) for context and [Contract-Driven Architecture](../contract-driven-architecture.md) for the contract approach.
 
@@ -14,52 +14,33 @@ The Workflow domain manages work items, tasks, SLA tracking, and task routing. I
 
 A discrete unit of work with a lifecycle. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
 
-| Field | Type | Industry Source |
-|-------|------|-----------------|
-| `id` | uuid, readOnly | Universal |
-| `name` | string | [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html): `name`; [Camunda](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/): `name`; ServiceNow: `short_description` |
-| `description` | string | WS-HumanTask: task description; Camunda: `description`; ServiceNow: `description` |
-| `status` | enum | WS-HumanTask: CREATED/CLAIMED/IN_PROGRESS/COMPLETED; Camunda: created/completed/canceled; ServiceNow: New/In Progress/Closed; [BPMN](https://www.bpmn.org/) task states |
-| `startedAt` | date-time | ServiceNow: `opened_at`; WS-HumanTask: state transition timestamps |
-| `completedAt` | date-time | ServiceNow: `closed_at`; Camunda: completion timestamp |
-| `assignedToId` | uuid (ref User) | WS-HumanTask: `actualOwner` (single-owner pattern); Camunda: `assignee`; ServiceNow: `assigned_to` |
-| `caseId` | uuid (ref Case) | Camunda: `caseInstanceId`; ServiceNow: parent reference |
-| `createdAt` | date-time, readOnly | Universal; required by `api-patterns.yaml` |
-| `updatedAt` | date-time, readOnly | Universal; required by `api-patterns.yaml` |
-
-**Status values:** `pending`, `in_progress`, `completed`
+Based on: [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html), [Camunda Tasklist](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/), ServiceNow Task, [BPMN](https://www.bpmn.org/) task states.
 
 **Key design decisions:**
-- Explicit status over derived state — WS-HumanTask, Camunda, ServiceNow, and BPMN all model task state as an explicit field, not derived from timestamps. Status records *where the task is now*; timestamps record *when transitions happened*.
+- Explicit status over derived state — all four systems model task state as an explicit field, not derived from timestamps.
 - Single-owner assignment — follows WS-HumanTask's `actualOwner` pattern. Group/queue assignment is future work.
-- Minimal status enum — the base set maps to the universal core of every task system. States extend via overlay.
+- Minimal status enum — the base set (`pending`, `in_progress`, `completed`) maps to the universal core of every task system. States extend via overlay.
+
+### TaskAuditEvent
+
+Immutable audit trail for task state transitions. Created automatically by the state machine engine's `create` effects — read-only API (no POST/PATCH/DELETE). [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
+
+| Concept | Industry Source |
+|---------|----------------|
+| Task event history | [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html): Task Event History |
+| Operation log | Camunda: [User Operation Log](https://docs.camunda.org/manual/latest/user-guide/process-engine/history/user-operation-log/) |
+| Audit trail | [Flowable](https://documentation.flowable.com/latest/reactmodel/bpmn/reference/audit): Audit Trail |
 
 ## Future Work
 
 ### Additional Task Fields
 
-These fields appear in the full domain design and will be added in future issues:
-
-| Field | Purpose | Industry Source |
-|-------|---------|----------------|
-| `priority` | expedited/high/normal/low | WS-HumanTask: `priority`; ServiceNow: `priority` |
-| `queueId` | Reference to Queue | [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html): Work Queue |
-| `programType` | Benefits program (SNAP, Medicaid, TANF) | Benefits-domain-specific |
-| `isExpedited` | Expedited processing flag | Benefits-domain-specific (7-day SNAP) |
-| `requiredSkills` | Skills needed to work this task | WS-HumanTask: `potentialOwners` skill matching |
-| `dueDate` | SLA deadline | WS-HumanTask: Deadline; Camunda: Timer Events |
-| `slaTypeCode` | Reference to SLA configuration | ServiceNow: `contract_sla` |
-| `slaInfo` | SLA tracking details (deadline, clock, status) | ServiceNow: [SLA Definition](https://www.emergys.com/blog/service-level-agreement-sla-for-servicenow/) |
-| `sourceInfo` | What triggered this task | WfMC: process instance context |
-| `parentTaskId` | For subtasks | WS-HumanTask: subtask model; BPMN: subprocess |
-| `blockedByTaskIds` | Dependencies | BPMN: sequence flow dependencies |
-| `outcomeInfo` | Completion details | WS-HumanTask: task output |
+Future fields include priority, queue assignment, program type, SLA tracking, subtasks, and dependencies. These are designed in the [workflow prototype](../../prototypes/workflow-prototype.md) and based on [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html), [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html), [Camunda](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/), ServiceNow, and [BPMN](https://www.bpmn.org/) patterns.
 
 ### Additional Entities
 
 | Entity | Purpose | Industry Source |
 |--------|---------|----------------|
-| **TaskAuditEvent** | Immutable audit trail | [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html): Task Event History; Camunda: [User Operation Log](https://docs.camunda.org/manual/latest/user-guide/process-engine/history/user-operation-log/); [Flowable](https://documentation.flowable.com/latest/reactmodel/bpmn/reference/audit): Audit Trail |
 | **Queue** | Routes tasks to groups by team/program/skill | WfMC: Worklist; ServiceNow: Assignment Group; Camunda: Candidate Groups |
 | **TaskType** | Task categorization config | ServiceNow: Category; Camunda: Task Definition Key; WS-HumanTask: Task Definition |
 | **SLAType** | SLA deadline config by program and task type | ServiceNow: [SLA Definition](https://www.emergys.com/blog/service-level-agreement-sla-for-servicenow/); WS-HumanTask: Deadline/Escalation |
@@ -68,9 +49,11 @@ These fields appear in the full domain design and will be added in future issues
 
 ### State Machine
 
-The task lifecycle defines 12 transitions. The [workflow prototype](../../prototypes/workflow-prototype.md) proves 3 transitions (claim, complete, release) with working examples. The remaining transitions use the same effect types and patterns.
+The task lifecycle defines 12 transitions across 9 states. 4 transitions are implemented today (`create`, `claim`, `complete`, `release`) with guards and `set`/`create` effects working in the mock server. See [`workflow-state-machine.yaml`](../../../packages/contracts/workflow-state-machine.yaml). The remaining transitions use the same effect types and patterns.
 
-Full states: `pending`, `in_progress`, `awaiting_client`, `awaiting_verification`, `awaiting_review`, `returned_to_queue`, `completed`, `cancelled`, `escalated`
+**Implemented:** `pending`, `in_progress`, `completed` (3 states, 4 transitions including `onCreate`)
+
+**Planned:** `awaiting_client`, `awaiting_verification`, `awaiting_review`, `returned_to_queue`, `cancelled`, `escalated` (6 additional states, 8 additional transitions)
 
 Key behavioral patterns:
 - Each transition trigger becomes an RPC API endpoint (e.g., `claim` -> `POST /workflow/tasks/:id/claim`)
@@ -97,10 +80,10 @@ Four categories of operational metrics, with the prototype proving one metric fr
 
 | Artifact | Status | Notes |
 |----------|--------|-------|
-| OpenAPI spec | Alpha | `workflow-openapi.yaml` — Task CRUD. Additional fields and entities in future issues |
-| State machine YAML | Draft | 12 transitions; prototype proves 3. See [workflow prototype](../../prototypes/workflow-prototype.md) |
-| Rules YAML | Draft | Assignment and priority rules; prototype proves 3 rules |
-| Metrics YAML | Draft | 4 metric categories; prototype proves 3 metrics |
+| OpenAPI spec | Alpha | `workflow-openapi.yaml` — Task CRUD + TaskAuditEvent (read-only). Additional fields and entities in future issues |
+| State machine YAML | Alpha | `workflow-state-machine.yaml` — 4 transitions with guards, `set`/`create` effects. 8 more planned. See [workflow prototype](../../prototypes/workflow-prototype.md) |
+| Rules YAML | Draft | Assignment and priority rules; designed in prototype, not yet implemented |
+| Metrics YAML | Draft | 4 metric categories; designed in prototype, not yet implemented |
 
 ## Key Design Questions
 
@@ -114,7 +97,7 @@ Four categories of operational metrics, with the prototype proving one metric fr
 
 | Document | Description |
 |----------|-------------|
-| [Workflow Prototype](../../prototypes/workflow-prototype.md) | Proven subset — 3 states, 3 transitions, 3 rules, 3 metrics |
+| [Workflow Prototype](../../prototypes/workflow-prototype.md) | Full design — 9 states, 12 transitions, rules, metrics |
 | [Domain Design](../domain-design.md) | Workflow section in the domain overview |
 | [Case Management](case-management.md) | Staff, teams, offices — closely related domain |
 | [Scheduling](scheduling.md) | Appointments may trigger workflow tasks |

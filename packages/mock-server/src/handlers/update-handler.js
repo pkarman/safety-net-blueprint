@@ -18,7 +18,7 @@ export function createUpdateHandler(apiMetadata, endpoint) {
       const resourceId = req.params[paramName] || req.params.id;
 
       // Check if resource exists
-      const existing = findById(apiMetadata.name, resourceId);
+      const existing = findById(endpoint.collectionName, resourceId);
       if (!existing) {
         return res.status(404).json({
           code: 'NOT_FOUND',
@@ -53,7 +53,7 @@ export function createUpdateHandler(apiMetadata, endpoint) {
         const { valid, errors } = validate(
           mergedData, 
           endpoint.requestSchema,
-          `${apiMetadata.name}-update`
+          `${endpoint.collectionName}-update`
         );
         
         if (!valid) {
@@ -62,7 +62,7 @@ export function createUpdateHandler(apiMetadata, endpoint) {
       }
       
       // Update in database (database manager handles deep merge and updatedAt timestamp)
-      const updated = update(apiMetadata.name, resourceId, req.body);
+      const updated = update(endpoint.collectionName, resourceId, req.body);
       
       res.json(updated);
     } catch (error) {

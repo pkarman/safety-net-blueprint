@@ -11,6 +11,7 @@ import {
   evaluateGuards,
   findTransition,
   applySetEffect,
+  applyCreateEffect,
   applyEffects
 } from '../../src/state-machine-engine.js';
 
@@ -51,6 +52,37 @@ test('resolveValue — $caller.missing returns null', () => {
 
 test('resolveValue — $caller.id with no caller returns null', () => {
   assert.strictEqual(resolveValue('$caller.id', {}), null);
+});
+
+test('resolveValue — $now returns context.now when provided', () => {
+  const context = { now: '2025-01-15T10:00:00.000Z' };
+  assert.strictEqual(resolveValue('$now', context), '2025-01-15T10:00:00.000Z');
+});
+
+test('resolveValue — $now falls back to current time when no context.now', () => {
+  const before = new Date().toISOString();
+  const result = resolveValue('$now', {});
+  const after = new Date().toISOString();
+  assert.ok(result >= before && result <= after);
+});
+
+test('resolveValue — $object.status resolves from context', () => {
+  const context = { object: { id: 'task-1', status: 'pending' } };
+  assert.strictEqual(resolveValue('$object.status', context), 'pending');
+});
+
+test('resolveValue — $object.id resolves from context', () => {
+  const context = { object: { id: 'task-1', status: 'pending' } };
+  assert.strictEqual(resolveValue('$object.id', context), 'task-1');
+});
+
+test('resolveValue — $object.missing returns null', () => {
+  const context = { object: { id: 'task-1' } };
+  assert.strictEqual(resolveValue('$object.missing', context), null);
+});
+
+test('resolveValue — $object.field with no context.object returns null', () => {
+  assert.strictEqual(resolveValue('$object.id', {}), null);
 });
 
 // =============================================================================
@@ -214,6 +246,59 @@ test('applySetEffect — sets null', () => {
 });
 
 // =============================================================================
+// applyCreateEffect
+// =============================================================================
+
+test('applyCreateEffect — resolves all field references', () => {
+  const effect = {
+    type: 'create',
+    entity: 'task-audit-events',
+    fields: {
+      taskId: '$object.id',
+      eventType: 'assigned',
+      previousValue: '$object.status',
+      newValue: 'in_progress',
+      performedById: '$caller.id',
+      occurredAt: '$now'
+    }
+  };
+  const context = {
+    caller: { id: 'worker-1' },
+    object: { id: 'task-99', status: 'pending' },
+    now: '2025-01-15T10:00:00.000Z'
+  };
+  const result = applyCreateEffect(effect, context);
+  assert.strictEqual(result.entity, 'task-audit-events');
+  assert.deepStrictEqual(result.data, {
+    taskId: 'task-99',
+    eventType: 'assigned',
+    previousValue: 'pending',
+    newValue: 'in_progress',
+    performedById: 'worker-1',
+    occurredAt: '2025-01-15T10:00:00.000Z'
+  });
+});
+
+test('applyCreateEffect — handles null fields gracefully', () => {
+  const effect = {
+    type: 'create',
+    entity: 'audit',
+    fields: { taskId: '$object.id', note: null }
+  };
+  const context = { object: { id: 'task-1' } };
+  const result = applyCreateEffect(effect, context);
+  assert.strictEqual(result.data.taskId, 'task-1');
+  assert.strictEqual(result.data.note, null);
+});
+
+test('applyCreateEffect — handles missing fields map', () => {
+  const effect = { type: 'create', entity: 'audit' };
+  const result = applyCreateEffect(effect, {});
+  assert.strictEqual(result.entity, 'audit');
+  assert.deepStrictEqual(result.data, {});
+});
+
+// =============================================================================
 // applyEffects
 // =============================================================================
 
@@ -224,9 +309,33 @@ test('applyEffects — applies multiple set effects', () => {
     { type: 'set', field: 'assignedToId', value: '$caller.id' },
     { type: 'set', field: 'priority', value: 'high' }
   ];
-  applyEffects(effects, resource, context);
+  const { pendingCreates } = applyEffects(effects, resource, context);
   assert.strictEqual(resource.assignedToId, 'worker-1');
   assert.strictEqual(resource.priority, 'high');
+  assert.deepStrictEqual(pendingCreates, []);
+});
+
+test('applyEffects — returns pendingCreates for create effects', () => {
+  const resource = { id: 'task-1', status: 'pending' };
+  const context = {
+    caller: { id: 'worker-1' },
+    object: { id: 'task-1', status: 'pending' },
+    now: '2025-01-15T10:00:00.000Z'
+  };
+  const effects = [
+    { type: 'set', field: 'assignedToId', value: '$caller.id' },
+    {
+      type: 'create',
+      entity: 'task-audit-events',
+      fields: { taskId: '$object.id', eventType: 'assigned' }
+    }
+  ];
+  const { pendingCreates } = applyEffects(effects, resource, context);
+  assert.strictEqual(resource.assignedToId, 'worker-1');
+  assert.strictEqual(pendingCreates.length, 1);
+  assert.strictEqual(pendingCreates[0].entity, 'task-audit-events');
+  assert.strictEqual(pendingCreates[0].data.taskId, 'task-1');
+  assert.strictEqual(pendingCreates[0].data.eventType, 'assigned');
 });
 
 test('applyEffects — skips unknown effect types', () => {
@@ -234,18 +343,21 @@ test('applyEffects — skips unknown effect types', () => {
   const effects = [
     { type: 'unknown_type', field: 'status', value: 'active' }
   ];
-  applyEffects(effects, resource, {});
+  const { pendingCreates } = applyEffects(effects, resource, {});
   assert.strictEqual(resource.status, 'pending');
+  assert.deepStrictEqual(pendingCreates, []);
 });
 
 test('applyEffects — handles null effects gracefully', () => {
   const resource = { status: 'pending' };
-  applyEffects(null, resource, {});
+  const { pendingCreates } = applyEffects(null, resource, {});
   assert.strictEqual(resource.status, 'pending');
+  assert.deepStrictEqual(pendingCreates, []);
 });
 
 test('applyEffects — handles empty effects array', () => {
   const resource = { status: 'pending' };
-  applyEffects([], resource, {});
+  const { pendingCreates } = applyEffects([], resource, {});
   assert.strictEqual(resource.status, 'pending');
+  assert.deepStrictEqual(pendingCreates, []);
 });
