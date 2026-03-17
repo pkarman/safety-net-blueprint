@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-03-17
+
+### Fixed
+
+- Zod datetime validation now accepts UTC offset format (`+00:00`) in addition to `Z` suffix. OpenAPI's `format: date-time` references RFC 3339 which allows both, but the generated Zod schemas previously rejected the offset form. This caused runtime validation failures with backends that serialize datetimes with `+00:00` (e.g., Django, Python's `.isoformat()`).
+
 ## [1.1.0] - 2026-03-03
 
 ### Added
