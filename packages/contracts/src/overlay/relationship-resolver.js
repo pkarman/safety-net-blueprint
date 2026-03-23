@@ -5,9 +5,13 @@
  * This module discovers those annotations and transforms the spec based
  * on the chosen relationship style.
  *
+ * Resolution is intentionally build-time (overlay resolution), not request-time.
+ * This produces static, predictable response shapes that enable type generation,
+ * caching, and consistent client expectations.
+ *
  * Supported styles:
  *   links-only  — adds a `links` object with URI references (default)
- *   expand      — converts FK to oneOf[string, object], adds ?expand param
+ *   expand      — replaces FK field with the related object schema (renamed: fooId → foo)
  *
  * Planned (not yet implemented):
  *   include     — JSON:API-style sideloading
@@ -111,70 +115,17 @@ function deriveLinkName(fkFieldName) {
 }
 
 /**
- * Find GET endpoints that return a given schema (direct or via list wrapper).
+ * Derive the API base path for a resource name.
+ * Converts PascalCase to kebab-case plural: User → /users, CaseWorker → /case-workers.
  *
- * @param {object} spec - Parsed OpenAPI spec
- * @param {string} schemaName - Schema name to match
- * @returns {string[]} Array of path strings (e.g., ["/tasks", "/tasks/{taskId}"])
+ * @param {string} resource - Schema name (PascalCase)
+ * @returns {string} Base path (e.g., '/users')
  */
-function findGetEndpoints(spec, schemaName) {
-  const endpoints = [];
-  if (!spec.paths) return endpoints;
-
-  const directRef = `#/components/schemas/${schemaName}`;
-
-  for (const [pathStr, pathItem] of Object.entries(spec.paths)) {
-    const getOp = pathItem?.get;
-    if (!getOp) continue;
-
-    const responseSchema = getOp.responses?.['200']?.content?.['application/json']?.schema;
-    if (!responseSchema) continue;
-
-    // Direct $ref match (item endpoint)
-    if (responseSchema.$ref === directRef) {
-      endpoints.push(pathStr);
-      continue;
-    }
-
-    // List endpoint: check allOf entries for items.$ref match
-    if (Array.isArray(responseSchema.allOf)) {
-      for (const entry of responseSchema.allOf) {
-        if (entry.properties?.items?.items?.$ref === directRef) {
-          endpoints.push(pathStr);
-          break;
-        }
-      }
-    }
-
-    // List endpoint: direct properties.items check
-    if (responseSchema.properties?.items?.items?.$ref === directRef) {
-      endpoints.push(pathStr);
-    }
-
-    // List endpoint via $ref to a *List schema — resolve and check
-    if (responseSchema.$ref && responseSchema.$ref.startsWith('#/components/schemas/')) {
-      const listSchemaName = responseSchema.$ref.replace('#/components/schemas/', '');
-      const listSchema = spec.components?.schemas?.[listSchemaName];
-      if (listSchema) {
-        // Check direct properties
-        if (listSchema.properties?.items?.items?.$ref === directRef) {
-          endpoints.push(pathStr);
-          continue;
-        }
-        // Check allOf
-        if (Array.isArray(listSchema.allOf)) {
-          for (const entry of listSchema.allOf) {
-            if (entry.properties?.items?.items?.$ref === directRef) {
-              endpoints.push(pathStr);
-              break;
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return endpoints;
+function resourceNameToPath(resource) {
+  const kebab = resource.replace(/([A-Z])/g, (m, c, offset) =>
+    offset > 0 ? '-' + c.toLowerCase() : c.toLowerCase()
+  );
+  return `/${kebab}s`;
 }
 
 // =============================================================================
@@ -226,30 +177,19 @@ function applyLinksOnly(schema, fields) {
 }
 
 /**
- * Apply expand style to a schema and its GET endpoints.
- * Converts FK fields to oneOf[string, object/$ref] and adds ?expand query param.
+ * Apply expand style to a schema.
+ * Renames the FK field (fooId → foo) and replaces it with the related object schema.
+ * Resolution is build-time: the expanded object is always present, no query param needed.
  *
- * @param {object} spec - Full parsed OpenAPI spec (mutated in place)
- * @param {string} schemaName - Name of the schema being transformed
+ * @param {string} schemaName - Name of the schema being transformed (for warnings)
  * @param {object} schema - The schema object (mutated in place)
  * @param {Array<{ propertyName: string, relationship: object }>} fields - Annotated FK fields
  * @param {Map} schemaIndex - Schema index for cross-spec resolution
  * @param {string[]} warnings - Warning accumulator
  */
-function applyExpand(spec, schemaName, schema, fields, schemaIndex, warnings) {
-  const expandableNames = [];
-
+function applyExpand(schemaName, schema, fields, schemaIndex, warnings) {
   for (const { propertyName, relationship } of fields) {
-    const propDef = findProperty(schema, propertyName);
-    if (!propDef) continue;
-
-    const linkName = deriveLinkName(propertyName);
-    expandableNames.push(linkName);
-
-    // Preserve the original description
-    const originalDescription = propDef.description;
-
-    // Build the expanded alternative
+    // Build the expanded schema
     let expandedSchema;
     if (relationship.fields && Array.isArray(relationship.fields)) {
       // Inline subset: pick specific fields from the target schema
@@ -265,62 +205,39 @@ function applyExpand(spec, schemaName, schema, fields, schemaIndex, warnings) {
       // Full $ref to target schema
       const targetInfo = schemaIndex.get(relationship.resource);
       if (targetInfo) {
-        expandedSchema = {
-          $ref: `#/components/schemas/${relationship.resource}`
-        };
+        expandedSchema = { $ref: `#/components/schemas/${relationship.resource}` };
       } else {
-        // Target not in this spec — use inline object as fallback
         warnings.push(
           `Resource "${relationship.resource}" not found in schema index for expand on ${schemaName}.${propertyName}`
         );
-        expandedSchema = {
-          type: 'object',
-          description: `Expanded ${relationship.resource}.`
-        };
+        expandedSchema = { type: 'object', description: `Expanded ${relationship.resource}.` };
       }
     }
 
-    // Replace property with oneOf
-    const oneOf = [
-      { type: 'string', format: 'uuid', description: `${relationship.resource} ID.` },
-      expandedSchema
-    ];
+    // Rename FK field (fooId → foo) and replace with expanded schema
+    const expandedFieldName = deriveLinkName(propertyName);
 
-    // Clear existing keys and set new structure
-    const keysToRemove = Object.keys(propDef).filter(k => k !== 'description');
-    for (const key of keysToRemove) {
-      delete propDef[key];
-    }
-    propDef.oneOf = oneOf;
-    if (originalDescription) {
-      propDef.description = originalDescription;
-    }
-  }
-
-  // Add ?expand query parameter to GET endpoints
-  if (expandableNames.length > 0) {
-    const endpoints = findGetEndpoints(spec, schemaName);
-    const expandParam = {
-      name: 'expand',
-      in: 'query',
-      description: 'Comma-separated list of relationships to expand inline.',
-      schema: {
-        type: 'array',
-        items: { type: 'string' }
-      },
-      style: 'form',
-      explode: false,
-      example: expandableNames.join(',')
-    };
-
-    for (const pathStr of endpoints) {
-      const getOp = spec.paths[pathStr].get;
-      if (!getOp.parameters) {
-        getOp.parameters = [];
+    const propertySources = schema.properties ? [schema.properties] : [];
+    if (Array.isArray(schema.allOf)) {
+      for (const entry of schema.allOf) {
+        if (entry.properties) propertySources.push(entry.properties);
       }
-      // Don't add if already present
-      if (!getOp.parameters.some(p => p.name === 'expand')) {
-        getOp.parameters.push(expandParam);
+    }
+
+    for (const props of propertySources) {
+      if (propertyName in props) {
+        delete props[propertyName];
+        props[expandedFieldName] = expandedSchema;
+        break;
+      }
+    }
+
+    // Update required arrays so the renamed field stays required
+    const schemasToCheck = [schema, ...(Array.isArray(schema.allOf) ? schema.allOf : [])];
+    for (const s of schemasToCheck) {
+      if (Array.isArray(s.required)) {
+        const idx = s.required.indexOf(propertyName);
+        if (idx !== -1) s.required[idx] = expandedFieldName;
       }
     }
   }
@@ -328,33 +245,73 @@ function applyExpand(spec, schemaName, schema, fields, schemaIndex, warnings) {
 
 /**
  * Build subset properties by picking fields from the target schema.
- * Falls back to generic string type if the target schema or field is not found.
+ * Supports dot notation to reach into related resources (e.g., "case.application.name").
+ * Each dot-path segment must correspond to an FK field with an x-relationship annotation.
+ * Recursion terminates naturally when all paths are reduced to simple field names.
+ *
+ * @param {string} resourceName - Schema to pick fields from
+ * @param {string[]} fields - Field names or dot paths (e.g., ['id', 'case.application.name'])
+ * @param {Map} schemaIndex - Schema index for cross-spec resolution
+ * @param {string[]} warnings - Warning accumulator
+ * @returns {object} Properties object suitable for use in an inline object schema
  */
 function buildSubsetProperties(resourceName, fields, schemaIndex, warnings) {
   const properties = {};
   const targetInfo = schemaIndex.get(resourceName);
+  const targetSchema = targetInfo?.spec.components?.schemas?.[resourceName];
+  const targetProperties = targetSchema ? gatherAllProperties(targetSchema) : {};
 
-  if (!targetInfo) {
-    // Can't resolve — generate generic properties
-    for (const field of fields) {
-      properties[field] = { type: 'string' };
-    }
-    return properties;
-  }
-
-  const targetSchema = targetInfo.spec.components?.schemas?.[resourceName];
-  const targetProperties = gatherAllProperties(targetSchema);
+  // Separate simple fields from dot-notation paths, grouping by first segment
+  const simpleFields = [];
+  const nestedGroups = new Map(); // expandedName → subpaths[]
 
   for (const field of fields) {
+    const dotIdx = field.indexOf('.');
+    if (dotIdx === -1) {
+      simpleFields.push(field);
+    } else {
+      const head = field.slice(0, dotIdx);
+      const tail = field.slice(dotIdx + 1);
+      if (!nestedGroups.has(head)) nestedGroups.set(head, []);
+      nestedGroups.get(head).push(tail);
+    }
+  }
+
+  // Simple fields: deep-copy from target schema
+  for (const field of simpleFields) {
     if (targetProperties[field]) {
-      // Deep copy the property definition (strip readOnly, examples, etc. that are schema-level)
       properties[field] = JSON.parse(JSON.stringify(targetProperties[field]));
     } else {
       properties[field] = { type: 'string' };
-      warnings.push(
-        `Field "${field}" not found on ${resourceName} schema; using generic string type`
-      );
+      if (targetInfo) {
+        warnings.push(`Field "${field}" not found on ${resourceName} schema; using generic string type`);
+      }
     }
+  }
+
+  // Dot-notation groups: find the FK relationship and recurse
+  for (const [head, subpaths] of nestedGroups) {
+    // Find a property where deriveLinkName(propName) === head and has x-relationship
+    const fkEntry = Object.entries(targetProperties).find(
+      ([propName, propDef]) => deriveLinkName(propName) === head && propDef?.['x-relationship']
+    );
+
+    if (!fkEntry) {
+      warnings.push(
+        `No x-relationship field found for "${head}" on ${resourceName}; cannot resolve dot-notation path`
+      );
+      continue;
+    }
+
+    const [, fkPropDef] = fkEntry;
+    const nestedResource = fkPropDef['x-relationship'].resource;
+    const subsetProperties = buildSubsetProperties(nestedResource, subpaths, schemaIndex, warnings);
+
+    properties[head] = {
+      type: 'object',
+      description: `Expanded ${nestedResource} (subset).`,
+      properties: subsetProperties
+    };
   }
 
   return properties;
@@ -431,10 +388,14 @@ const PLANNED_STYLES = ['include', 'embed'];
  * @param {object} spec - Parsed OpenAPI spec (deep-cloned before calling)
  * @param {string} globalStyle - Default style from config (default: 'links-only')
  * @param {Map} schemaIndex - Schema index from buildSchemaIndex()
- * @returns {{ result: object, warnings: string[] }}
+ * @returns {{ result: object, warnings: string[], expandRenames: Array, linksData: Array }}
+ *   expandRenames: fields that were expanded, for use with resolveExampleRelationships
+ *   linksData: fields that got links-only treatment, for use with resolveExampleRelationships
  */
 function resolveRelationships(spec, globalStyle = 'links-only', schemaIndex = new Map()) {
   const warnings = [];
+  const expandRenames = [];
+  const linksData = [];
 
   // Validate global style
   if (PLANNED_STYLES.includes(globalStyle)) {
@@ -445,7 +406,7 @@ function resolveRelationships(spec, globalStyle = 'links-only', schemaIndex = ne
 
   const relationships = discoverRelationships(spec);
   if (relationships.length === 0) {
-    return { result: spec, warnings };
+    return { result: spec, warnings, expandRenames };
   }
 
   // Warn about unknown resource references
@@ -492,14 +453,199 @@ function resolveRelationships(spec, globalStyle = 'links-only', schemaIndex = ne
 
     if (linksOnlyFields.length > 0) {
       applyLinksOnly(schema, linksOnlyFields);
+
+      for (const field of linksOnlyFields) {
+        linksData.push({
+          propertyName: field.propertyName,
+          linkName: deriveLinkName(field.propertyName),
+          resource: field.relationship.resource,
+          basePath: resourceNameToPath(field.relationship.resource)
+        });
+      }
     }
 
     if (expandFields.length > 0) {
-      applyExpand(spec, schemaName, schema, expandFields, schemaIndex, warnings);
+      applyExpand(schemaName, schema, expandFields, schemaIndex, warnings);
+
+      for (const field of expandFields) {
+        expandRenames.push({
+          propertyName: field.propertyName,
+          expandedFieldName: deriveLinkName(field.propertyName),
+          resource: field.relationship.resource,
+          fields: field.relationship.fields || null
+        });
+      }
     }
   }
 
-  return { result: spec, warnings };
+  return { result: spec, warnings, expandRenames, linksData };
+}
+
+// =============================================================================
+// Example Transform
+// =============================================================================
+
+/**
+ * Build a flat index of id → record across multiple example data objects.
+ * Used by resolveExampleRelationships to look up related resources by UUID.
+ *
+ * @param {object[]} allExamplesData - Array of parsed examples YAML objects
+ * @returns {Map<string, object>}
+ */
+function buildExamplesIndex(allExamplesData) {
+  const index = new Map();
+  for (const examplesData of allExamplesData) {
+    if (!examplesData || typeof examplesData !== 'object') continue;
+    for (const record of Object.values(examplesData)) {
+      if (record && typeof record === 'object' && record.id) {
+        index.set(record.id, record);
+      }
+    }
+  }
+  return index;
+}
+
+/**
+ * Build a subset of an example record according to a fields list that may include
+ * dot-notation paths (e.g., ['id', 'case.application.name']).
+ *
+ * For each dot-notation path, finds the FK field in the record by matching
+ * deriveLinkName(fkField) === firstSegment, looks up the related record by UUID
+ * from the examples index, and recurses with the remaining path segments.
+ * Recursion terminates naturally when all paths are reduced to simple field names.
+ *
+ * @param {object} record - The example record to pick fields from
+ * @param {string[]} fields - Field names or dot paths
+ * @param {Map<string, object>} examplesIndex - id → record across all example files
+ * @param {string} context - Path string for warning messages
+ * @param {string[]} warnings - Warning accumulator
+ * @returns {object}
+ */
+function buildExampleSubset(record, fields, examplesIndex, context, warnings) {
+  const subset = {};
+  const simpleFields = [];
+  const nestedGroups = new Map(); // head → subpaths[]
+
+  for (const field of fields) {
+    const dotIdx = field.indexOf('.');
+    if (dotIdx === -1) {
+      simpleFields.push(field);
+    } else {
+      const head = field.slice(0, dotIdx);
+      const tail = field.slice(dotIdx + 1);
+      if (!nestedGroups.has(head)) nestedGroups.set(head, []);
+      nestedGroups.get(head).push(tail);
+    }
+  }
+
+  for (const field of simpleFields) {
+    if (field in record) subset[field] = record[field];
+  }
+
+  for (const [head, subpaths] of nestedGroups) {
+    // Find the FK field: deriveLinkName(fkField) === head
+    const fkField = Object.keys(record).find(k => deriveLinkName(k) === head && k !== head);
+
+    if (!fkField) {
+      warnings.push(`${context}: no FK field found for "${head}"; cannot resolve dot-notation path`);
+      continue;
+    }
+
+    const uuid = record[fkField];
+    if (!uuid) {
+      subset[head] = null;
+      continue;
+    }
+
+    const relatedRecord = examplesIndex.get(uuid);
+    if (!relatedRecord) {
+      warnings.push(`${context}.${head}: no example found with id "${uuid}"`);
+      subset[head] = uuid; // best effort: preserve raw UUID
+      continue;
+    }
+
+    subset[head] = buildExampleSubset(relatedRecord, subpaths, examplesIndex, `${context}.${head}`, warnings);
+  }
+
+  return subset;
+}
+
+/**
+ * Transform example records to match expand-style field renames and links-only additions.
+ *
+ * For each expand rename, finds example records that have the FK field,
+ * looks up the related resource by UUID from the examples index, and
+ * replaces the FK value with the full joined object (or a subset if
+ * `fields` was specified on the relationship). Fields may include dot-notation
+ * paths to reach into related resources (e.g., 'case.application.name').
+ *
+ * For each links-only entry, adds a `links` object to example records with
+ * URI values derived from the FK field value (e.g., assignedToId → links.assignedTo: "/users/{id}").
+ *
+ * @param {object} examplesData - Parsed examples YAML (key → record)
+ * @param {Array<{ propertyName, expandedFieldName, resource, fields }>} expandRenames
+ * @param {Map<string, object>} examplesIndex - id → record across all example files
+ * @param {Array<{ propertyName, linkName, resource, basePath }>} linksData
+ * @returns {{ result: object, warnings: string[] }}
+ */
+function resolveExampleRelationships(examplesData, expandRenames, examplesIndex, linksData = []) {
+  if (!examplesData || (expandRenames.length === 0 && linksData.length === 0)) {
+    return { result: examplesData, warnings: [] };
+  }
+
+  const warnings = [];
+  const result = JSON.parse(JSON.stringify(examplesData));
+
+  for (const [exampleName, record] of Object.entries(result)) {
+    if (!record || typeof record !== 'object') continue;
+
+    for (const { propertyName, expandedFieldName, resource, fields } of expandRenames) {
+      if (!(propertyName in record)) continue;
+
+      const fkValue = record[propertyName];
+      delete record[propertyName];
+
+      if (!fkValue) {
+        record[expandedFieldName] = null;
+        continue;
+      }
+
+      const relatedRecord = examplesIndex.get(fkValue);
+
+      if (!relatedRecord) {
+        warnings.push(
+          `${exampleName}.${propertyName}: no example found with id "${fkValue}" for resource "${resource}"`
+        );
+        record[expandedFieldName] = fkValue; // best effort: preserve raw UUID
+        continue;
+      }
+
+      if (fields && Array.isArray(fields)) {
+        record[expandedFieldName] = buildExampleSubset(
+          relatedRecord, fields, examplesIndex, `${exampleName}.${expandedFieldName}`, warnings
+        );
+      } else {
+        record[expandedFieldName] = { ...relatedRecord };
+      }
+    }
+
+    // links-only: add a links object with URI values
+    const linksToAdd = {};
+    for (const { propertyName, linkName, basePath } of linksData) {
+      if (!(propertyName in record)) continue;
+      const fkValue = record[propertyName];
+      if (fkValue) {
+        linksToAdd[linkName] = `${basePath}/${fkValue}`;
+      }
+    }
+    if (Object.keys(linksToAdd).length > 0) {
+      record.links = record.links
+        ? { ...record.links, ...linksToAdd }
+        : linksToAdd;
+    }
+  }
+
+  return { result, warnings };
 }
 
 export {
@@ -507,5 +653,6 @@ export {
   buildSchemaIndex,
   deriveLinkName,
   resolveRelationships,
-  findGetEndpoints
+  buildExamplesIndex,
+  resolveExampleRelationships
 };

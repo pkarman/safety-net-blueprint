@@ -31,7 +31,7 @@ import { fileURLToPath } from 'url';
 import yaml from 'js-yaml';
 import { applyOverlay, checkPathExists } from '../src/overlay/overlay-resolver.js';
 import { extractConfig, validateConfig } from '../src/overlay/config.js';
-import { discoverRelationships, buildSchemaIndex, resolveRelationships } from '../src/overlay/relationship-resolver.js';
+import { discoverRelationships, buildSchemaIndex, resolveRelationships, buildExamplesIndex, resolveExampleRelationships } from '../src/overlay/relationship-resolver.js';
 import { bundleSpec } from '../src/bundle.js';
 import { discoverStateMachines, extractItemEndpoint, generateOverlay } from './generate-rpc-overlay.js';
 
@@ -748,16 +748,34 @@ async function main() {
   {
     const schemaIndex = buildSchemaIndex(currentResults);
     const relationshipStyle = overlayConfig?.['x-relationship']?.style || 'links-only';
+    const allExpandRenames = [];
+    const allLinksData = [];
 
     for (const [relativePath, spec] of currentResults) {
       const found = discoverRelationships(spec);
       if (found.length === 0) continue;
 
-      const { result, warnings } = resolveRelationships(spec, relationshipStyle, schemaIndex);
+      const { result, warnings, expandRenames, linksData } = resolveRelationships(spec, relationshipStyle, schemaIndex);
       currentResults.set(relativePath, result);
       allWarnings = allWarnings.concat(warnings);
+      if (expandRenames.length > 0) allExpandRenames.push(...expandRenames);
+      if (linksData.length > 0) allLinksData.push(...linksData);
 
       console.log(`Relationships: ${relativePath} (${found.length} fields, style: ${relationshipStyle})`);
+    }
+
+    // Transform example data to match resolved relationship fields
+    if (allExpandRenames.length > 0 || allLinksData.length > 0) {
+      const examplesEntries = [...currentResults.entries()]
+        .filter(([path]) => path.endsWith('-openapi-examples.yaml'));
+
+      const examplesIndex = buildExamplesIndex(examplesEntries.map(([, data]) => data));
+
+      for (const [relativePath, data] of examplesEntries) {
+        const { result, warnings } = resolveExampleRelationships(data, allExpandRenames, examplesIndex, allLinksData);
+        currentResults.set(relativePath, result);
+        allWarnings = allWarnings.concat(warnings);
+      }
     }
   }
 

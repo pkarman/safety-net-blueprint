@@ -9,7 +9,8 @@ import {
   buildSchemaIndex,
   deriveLinkName,
   resolveRelationships,
-  findGetEndpoints
+  buildExamplesIndex,
+  resolveExampleRelationships
 } from '../../src/overlay/relationship-resolver.js';
 
 test('relationship-resolver tests', async (t) => {
@@ -165,92 +166,6 @@ test('relationship-resolver tests', async (t) => {
   });
 
   // ===========================================================================
-  // findGetEndpoints
-  // ===========================================================================
-
-  await t.test('findGetEndpoints - finds direct $ref item endpoint', () => {
-    const spec = {
-      paths: {
-        '/tasks/{taskId}': {
-          get: {
-            responses: {
-              '200': {
-                content: { 'application/json': { schema: { $ref: '#/components/schemas/Task' } } }
-              }
-            }
-          }
-        }
-      }
-    };
-
-    const endpoints = findGetEndpoints(spec, 'Task');
-    assert.deepStrictEqual(endpoints, ['/tasks/{taskId}']);
-  });
-
-  await t.test('findGetEndpoints - finds list endpoint via $ref to list schema', () => {
-    const spec = {
-      paths: {
-        '/tasks': {
-          get: {
-            responses: {
-              '200': {
-                content: { 'application/json': { schema: { $ref: '#/components/schemas/TaskList' } } }
-              }
-            }
-          }
-        }
-      },
-      components: {
-        schemas: {
-          TaskList: {
-            allOf: [
-              { $ref: './components/pagination.yaml#/Pagination' },
-              {
-                type: 'object',
-                properties: {
-                  items: { type: 'array', items: { $ref: '#/components/schemas/Task' } }
-                }
-              }
-            ]
-          }
-        }
-      }
-    };
-
-    const endpoints = findGetEndpoints(spec, 'Task');
-    assert.deepStrictEqual(endpoints, ['/tasks']);
-  });
-
-  await t.test('findGetEndpoints - finds list endpoint with direct properties', () => {
-    const spec = {
-      paths: {
-        '/queues': {
-          get: {
-            responses: {
-              '200': {
-                content: { 'application/json': { schema: { $ref: '#/components/schemas/QueueList' } } }
-              }
-            }
-          }
-        }
-      },
-      components: {
-        schemas: {
-          QueueList: {
-            type: 'object',
-            properties: {
-              items: { type: 'array', items: { $ref: '#/components/schemas/Queue' } }
-            }
-          }
-        }
-      }
-    };
-
-    const endpoints = findGetEndpoints(spec, 'Queue');
-    assert.deepStrictEqual(endpoints, ['/queues']);
-  });
-
-  // ===========================================================================
   // resolveRelationships — links-only
   // ===========================================================================
 
@@ -346,49 +261,8 @@ test('relationship-resolver tests', async (t) => {
   // resolveRelationships — expand
   // ===========================================================================
 
-  await t.test('resolveRelationships expand - converts to oneOf and adds expand param', () => {
-    const userSchema = {
-      type: 'object',
-      properties: {
-        id: { type: 'string', format: 'uuid' },
-        name: { type: 'string' },
-        email: { type: 'string', format: 'email' },
-        role: { type: 'string' }
-      }
-    };
-
+  await t.test('resolveRelationships expand - renames FK field and replaces with subset schema', () => {
     const spec = {
-      paths: {
-        '/tasks/{taskId}': {
-          get: {
-            operationId: 'getTask',
-            responses: {
-              '200': {
-                content: {
-                  'application/json': {
-                    schema: { $ref: '#/components/schemas/Task' }
-                  }
-                }
-              }
-            }
-          }
-        },
-        '/tasks': {
-          get: {
-            operationId: 'listTasks',
-            parameters: [],
-            responses: {
-              '200': {
-                content: {
-                  'application/json': {
-                    schema: { $ref: '#/components/schemas/TaskList' }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
       components: {
         schemas: {
           Task: {
@@ -407,13 +281,15 @@ test('relationship-resolver tests', async (t) => {
               }
             }
           },
-          TaskList: {
-            allOf: [
-              { type: 'object', properties: { total: { type: 'integer' } } },
-              { type: 'object', properties: { items: { type: 'array', items: { $ref: '#/components/schemas/Task' } } } }
-            ]
-          },
-          User: userSchema
+          User: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' },
+              email: { type: 'string', format: 'email' },
+              role: { type: 'string' }
+            }
+          }
         }
       }
     };
@@ -421,53 +297,27 @@ test('relationship-resolver tests', async (t) => {
     const schemaIndex = buildSchemaIndex(new Map([['workflow.yaml', spec]]));
     const { result, warnings } = resolveRelationships(spec, 'links-only', schemaIndex);
 
-    // FK field converted to oneOf
-    const assignedToId = result.components.schemas.Task.properties.assignedToId;
-    assert.ok(assignedToId.oneOf);
-    assert.strictEqual(assignedToId.oneOf.length, 2);
-    assert.strictEqual(assignedToId.oneOf[0].type, 'string');
-    assert.strictEqual(assignedToId.oneOf[0].format, 'uuid');
-    // Inline subset
-    assert.strictEqual(assignedToId.oneOf[1].type, 'object');
-    assert.ok(assignedToId.oneOf[1].properties.id);
-    assert.ok(assignedToId.oneOf[1].properties.name);
-    assert.ok(assignedToId.oneOf[1].properties.email);
-    assert.strictEqual(assignedToId.oneOf[1].properties.role, undefined);
+    const props = result.components.schemas.Task.properties;
 
-    // Description preserved
-    assert.strictEqual(assignedToId.description, 'Reference to the User assigned to this task.');
+    // FK field removed, renamed field added
+    assert.strictEqual(props.assignedToId, undefined, 'FK field should be removed');
+    assert.ok(props.assignedTo, 'renamed field should exist');
 
-    // x-relationship stripped
-    assert.strictEqual(assignedToId['x-relationship'], undefined);
+    // Inline subset with only the requested fields
+    assert.strictEqual(props.assignedTo.type, 'object');
+    assert.ok(props.assignedTo.properties.id);
+    assert.ok(props.assignedTo.properties.name);
+    assert.ok(props.assignedTo.properties.email);
+    assert.strictEqual(props.assignedTo.properties.role, undefined, 'unrequested fields should be excluded');
 
-    // Expand query param added to both GET endpoints
-    const getTaskParams = result.paths['/tasks/{taskId}'].get.parameters;
-    assert.ok(getTaskParams);
-    const expandParam = getTaskParams.find(p => p.name === 'expand');
-    assert.ok(expandParam);
-    assert.strictEqual(expandParam.in, 'query');
-    assert.strictEqual(expandParam.schema.type, 'array');
-
-    const listTaskParams = result.paths['/tasks'].get.parameters;
-    const listExpandParam = listTaskParams.find(p => p.name === 'expand');
-    assert.ok(listExpandParam);
+    // No query params added (build-time, not request-time)
+    assert.strictEqual(result.paths, undefined);
 
     assert.strictEqual(warnings.length, 0);
   });
 
   await t.test('resolveRelationships expand - full $ref when no fields specified', () => {
     const spec = {
-      paths: {
-        '/tasks/{taskId}': {
-          get: {
-            responses: {
-              '200': {
-                content: { 'application/json': { schema: { $ref: '#/components/schemas/Task' } } }
-              }
-            }
-          }
-        }
-      },
       components: {
         schemas: {
           Task: {
@@ -488,8 +338,36 @@ test('relationship-resolver tests', async (t) => {
     const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
     const { result } = resolveRelationships(spec, 'links-only', schemaIndex);
 
-    const assignedToId = result.components.schemas.Task.properties.assignedToId;
-    assert.strictEqual(assignedToId.oneOf[1].$ref, '#/components/schemas/User');
+    const props = result.components.schemas.Task.properties;
+    assert.strictEqual(props.assignedToId, undefined, 'FK field should be removed');
+    assert.strictEqual(props.assignedTo.$ref, '#/components/schemas/User');
+  });
+
+  await t.test('resolveRelationships expand - updates required array when FK field was required', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            required: ['id', 'assignedToId'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              assignedToId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'User', style: 'expand' }
+              }
+            }
+          },
+          User: { type: 'object', properties: { id: { type: 'string' } } }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { result } = resolveRelationships(spec, 'links-only', schemaIndex);
+
+    assert.deepStrictEqual(result.components.schemas.Task.required, ['id', 'assignedTo']);
   });
 
   // ===========================================================================
@@ -545,14 +423,369 @@ test('relationship-resolver tests', async (t) => {
     const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
     const { result } = resolveRelationships(spec, 'links-only', schemaIndex);
 
-    // assignedToId should be expanded (per-field override)
-    const assignedTo = result.components.schemas.Task.properties.assignedToId;
-    assert.ok(assignedTo.oneOf, 'assignedToId should have oneOf (expand style)');
+    const props = result.components.schemas.Task.properties;
+
+    // assignedToId removed, assignedTo added with expanded schema (per-field override)
+    assert.strictEqual(props.assignedToId, undefined, 'FK field should be removed');
+    assert.ok(props.assignedTo, 'renamed expanded field should exist');
+    assert.ok(props.assignedTo.properties?.id);
+    assert.ok(props.assignedTo.properties?.name);
 
     // caseId should get links (global default)
-    assert.strictEqual(result.components.schemas.Task.properties.caseId['x-relationship'], undefined);
-    assert.ok(result.components.schemas.Task.properties.links, 'links object should exist for caseId');
-    assert.ok(result.components.schemas.Task.properties.links.properties.case);
+    assert.strictEqual(props.caseId['x-relationship'], undefined);
+    assert.ok(props.links, 'links object should exist for caseId');
+    assert.ok(props.links.properties.case);
+  });
+
+  // ===========================================================================
+  // Dot notation — spec transform
+  // ===========================================================================
+
+  await t.test('expand fields dot notation - one level deep', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            properties: {
+              caseId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': {
+                  resource: 'Case',
+                  style: 'expand',
+                  fields: ['id', 'status', 'application.id', 'application.name']
+                }
+              }
+            }
+          },
+          Case: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              status: { type: 'string' },
+              applicationId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'Application' }
+              }
+            }
+          },
+          Application: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' },
+              status: { type: 'string' }
+            }
+          }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { result, warnings } = resolveRelationships(spec, 'links-only', schemaIndex);
+
+    const caseProps = result.components.schemas.Task.properties.case.properties;
+
+    // Simple fields
+    assert.ok(caseProps.id);
+    assert.ok(caseProps.status);
+
+    // Dot-notation fields produce nested object
+    assert.ok(caseProps.application, 'application should exist');
+    assert.strictEqual(caseProps.application.type, 'object');
+    assert.ok(caseProps.application.properties.id);
+    assert.ok(caseProps.application.properties.name);
+    assert.strictEqual(caseProps.application.properties.status, undefined, 'unrequested field excluded');
+
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  await t.test('expand fields dot notation - two levels deep', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            properties: {
+              caseId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': {
+                  resource: 'Case',
+                  style: 'expand',
+                  fields: ['id', 'application.program.name']
+                }
+              }
+            }
+          },
+          Case: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              applicationId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'Application' }
+              }
+            }
+          },
+          Application: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              programId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'Program' }
+              }
+            }
+          },
+          Program: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              name: { type: 'string' }
+            }
+          }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { result, warnings } = resolveRelationships(spec, 'links-only', schemaIndex);
+
+    const caseProps = result.components.schemas.Task.properties.case.properties;
+    assert.ok(caseProps.id);
+    assert.ok(caseProps.application.properties.program.properties.name);
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  await t.test('expand fields dot notation - warns when no x-relationship found for path segment', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            properties: {
+              caseId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': {
+                  resource: 'Case',
+                  style: 'expand',
+                  fields: ['id', 'notes.text']  // notes is not an FK relationship
+                }
+              }
+            }
+          },
+          Case: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              notes: { type: 'string' }  // plain field, no x-relationship
+            }
+          }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { warnings } = resolveRelationships(spec, 'links-only', schemaIndex);
+    assert.ok(warnings.some(w => w.includes('notes') && w.includes('x-relationship')));
+  });
+
+  // ===========================================================================
+  // Dot notation — example transform
+  // ===========================================================================
+
+  await t.test('resolveExampleRelationships - dot notation one level deep', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', caseId: 'case-001' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'caseId',
+      expandedFieldName: 'case',
+      resource: 'Case',
+      fields: ['id', 'application.id', 'application.name']
+    }];
+
+    const examplesIndex = new Map([
+      ['case-001', { id: 'case-001', status: 'open', applicationId: 'app-001' }],
+      ['app-001', { id: 'app-001', name: 'Rivera SNAP', status: 'submitted' }]
+    ]);
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, expandRenames, examplesIndex);
+
+    assert.strictEqual(warnings.length, 0);
+    const c = result.TaskExample1.case;
+    assert.strictEqual(c.id, 'case-001');
+    assert.strictEqual(c.application.id, 'app-001');
+    assert.strictEqual(c.application.name, 'Rivera SNAP');
+    assert.strictEqual(c.application.status, undefined, 'unrequested field excluded');
+    assert.strictEqual(c.status, undefined, 'unrequested top-level field excluded');
+  });
+
+  await t.test('resolveExampleRelationships - dot notation two levels deep', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', caseId: 'case-001' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'caseId',
+      expandedFieldName: 'case',
+      resource: 'Case',
+      fields: ['id', 'application.program.name']
+    }];
+
+    const examplesIndex = new Map([
+      ['case-001', { id: 'case-001', applicationId: 'app-001' }],
+      ['app-001', { id: 'app-001', programId: 'prog-001' }],
+      ['prog-001', { id: 'prog-001', name: 'SNAP' }]
+    ]);
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, expandRenames, examplesIndex);
+
+    assert.strictEqual(warnings.length, 0);
+    assert.strictEqual(result.TaskExample1.case.application.program.name, 'SNAP');
+  });
+
+  await t.test('resolveExampleRelationships - dot notation warns when FK field not found', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', caseId: 'case-001' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'caseId',
+      expandedFieldName: 'case',
+      resource: 'Case',
+      fields: ['id', 'widget.name']  // Case record has no widgetId FK
+    }];
+
+    const examplesIndex = new Map([
+      ['case-001', { id: 'case-001', status: 'open' }]
+    ]);
+
+    const { warnings } = resolveExampleRelationships(examplesData, expandRenames, examplesIndex);
+    assert.ok(warnings.some(w => w.includes('widget')));
+  });
+
+  // ===========================================================================
+  // resolveRelationships — linksData output
+  // ===========================================================================
+
+  await t.test('resolveRelationships returns linksData for links-only fields', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            properties: {
+              assignedToId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'User' }
+              },
+              caseId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'Case', style: 'expand' }
+              }
+            }
+          },
+          User: { type: 'object', properties: { id: { type: 'string' } } },
+          Case: { type: 'object', properties: { id: { type: 'string' } } }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { linksData, expandRenames } = resolveRelationships(spec, 'links-only', schemaIndex);
+
+    // linksData for the links-only field only
+    assert.strictEqual(linksData.length, 1);
+    assert.strictEqual(linksData[0].propertyName, 'assignedToId');
+    assert.strictEqual(linksData[0].linkName, 'assignedTo');
+    assert.strictEqual(linksData[0].resource, 'User');
+    assert.strictEqual(linksData[0].basePath, '/users');
+
+    // expand field not in linksData
+    assert.strictEqual(expandRenames.length, 1);
+    assert.strictEqual(expandRenames[0].propertyName, 'caseId');
+  });
+
+  // ===========================================================================
+  // resolveExampleRelationships — links-only example transform
+  // ===========================================================================
+
+  await t.test('resolveExampleRelationships - adds links object for links-only fields', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: 'user-001', caseId: 'case-001' }
+    };
+
+    const linksData = [
+      { propertyName: 'assignedToId', linkName: 'assignedTo', resource: 'User', basePath: '/users' },
+      { propertyName: 'caseId', linkName: 'case', resource: 'Case', basePath: '/cases' }
+    ];
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, [], new Map(), linksData);
+
+    assert.strictEqual(warnings.length, 0);
+    // FK fields stay
+    assert.strictEqual(result.TaskExample1.assignedToId, 'user-001');
+    assert.strictEqual(result.TaskExample1.caseId, 'case-001');
+    // links object added with URIs
+    assert.deepStrictEqual(result.TaskExample1.links, {
+      assignedTo: '/users/user-001',
+      case: '/cases/case-001'
+    });
+  });
+
+  await t.test('resolveExampleRelationships - skips null FK in links-only', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: null }
+    };
+
+    const linksData = [
+      { propertyName: 'assignedToId', linkName: 'assignedTo', resource: 'User', basePath: '/users' }
+    ];
+
+    const { result } = resolveExampleRelationships(examplesData, [], new Map(), linksData);
+
+    assert.strictEqual(result.TaskExample1.links, undefined);
+  });
+
+  await t.test('resolveExampleRelationships - merges links with existing links object', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: 'user-001', links: { self: '/tasks/task-001' } }
+    };
+
+    const linksData = [
+      { propertyName: 'assignedToId', linkName: 'assignedTo', resource: 'User', basePath: '/users' }
+    ];
+
+    const { result } = resolveExampleRelationships(examplesData, [], new Map(), linksData);
+
+    assert.deepStrictEqual(result.TaskExample1.links, {
+      self: '/tasks/task-001',
+      assignedTo: '/users/user-001'
+    });
+  });
+
+  await t.test('resolveExampleRelationships - skips records without the FK field (links-only)', () => {
+    const examplesData = {
+      QueueExample1: { id: 'queue-001', name: 'SNAP intake' }
+    };
+
+    const linksData = [
+      { propertyName: 'assignedToId', linkName: 'assignedTo', resource: 'User', basePath: '/users' }
+    ];
+
+    const { result } = resolveExampleRelationships(examplesData, [], new Map(), linksData);
+
+    assert.deepStrictEqual(result.QueueExample1, { id: 'queue-001', name: 'SNAP intake' });
   });
 
   // ===========================================================================
@@ -646,5 +879,206 @@ test('relationship-resolver tests', async (t) => {
     const { result, warnings } = resolveRelationships(spec, 'links-only');
     assert.deepStrictEqual(result, spec);
     assert.strictEqual(warnings.length, 0);
+  });
+
+  // ===========================================================================
+  // resolveRelationships — expandRenames output
+  // ===========================================================================
+
+  await t.test('resolveRelationships returns expandRenames for expanded fields', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            properties: {
+              assignedToId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'User', style: 'expand', fields: ['id', 'name'] }
+              },
+              caseId: {
+                type: 'string',
+                format: 'uuid',
+                'x-relationship': { resource: 'Case' }
+              }
+            }
+          },
+          User: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' } } },
+          Case: { type: 'object', properties: { id: { type: 'string' } } }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { expandRenames } = resolveRelationships(spec, 'links-only', schemaIndex);
+
+    assert.strictEqual(expandRenames.length, 1);
+    assert.strictEqual(expandRenames[0].propertyName, 'assignedToId');
+    assert.strictEqual(expandRenames[0].expandedFieldName, 'assignedTo');
+    assert.strictEqual(expandRenames[0].resource, 'User');
+    assert.deepStrictEqual(expandRenames[0].fields, ['id', 'name']);
+  });
+
+  await t.test('resolveRelationships returns empty expandRenames when no expand fields', () => {
+    const spec = {
+      components: {
+        schemas: {
+          Task: {
+            type: 'object',
+            properties: {
+              caseId: { type: 'string', 'x-relationship': { resource: 'Case' } }
+            }
+          },
+          Case: { type: 'object', properties: { id: { type: 'string' } } }
+        }
+      }
+    };
+
+    const schemaIndex = buildSchemaIndex(new Map([['spec.yaml', spec]]));
+    const { expandRenames } = resolveRelationships(spec, 'links-only', schemaIndex);
+    assert.strictEqual(expandRenames.length, 0);
+  });
+
+  // ===========================================================================
+  // buildExamplesIndex
+  // ===========================================================================
+
+  await t.test('buildExamplesIndex - indexes records by id across multiple files', () => {
+    const allExamples = [
+      {
+        TaskExample1: { id: 'task-001', name: 'Review application', assignedToId: 'user-001' },
+        TaskExample2: { id: 'task-002', name: 'Schedule interview', assignedToId: 'user-002' }
+      },
+      {
+        UserExample1: { id: 'user-001', name: 'Jane Smith', email: 'jane@example.gov' },
+        UserExample2: { id: 'user-002', name: 'John Doe', email: 'john@example.gov' }
+      }
+    ];
+
+    const index = buildExamplesIndex(allExamples);
+    assert.strictEqual(index.size, 4);
+    assert.strictEqual(index.get('task-001').name, 'Review application');
+    assert.strictEqual(index.get('user-001').email, 'jane@example.gov');
+    assert.strictEqual(index.has('nonexistent'), false);
+  });
+
+  await t.test('buildExamplesIndex - skips records without id', () => {
+    const allExamples = [
+      {
+        WithId: { id: 'abc-123', name: 'Has ID' },
+        WithoutId: { name: 'No ID' }
+      }
+    ];
+
+    const index = buildExamplesIndex(allExamples);
+    assert.strictEqual(index.size, 1);
+    assert.ok(index.has('abc-123'));
+  });
+
+  // ===========================================================================
+  // resolveExampleRelationships
+  // ===========================================================================
+
+  await t.test('resolveExampleRelationships - joins FK with full related record', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', name: 'Review application', assignedToId: 'user-001' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'assignedToId',
+      expandedFieldName: 'assignedTo',
+      resource: 'User',
+      fields: null
+    }];
+
+    const examplesIndex = new Map([
+      ['user-001', { id: 'user-001', name: 'Jane Smith', email: 'jane@example.gov' }]
+    ]);
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, expandRenames, examplesIndex);
+
+    assert.strictEqual(warnings.length, 0);
+    assert.strictEqual(result.TaskExample1.assignedToId, undefined, 'FK field should be removed');
+    assert.deepStrictEqual(result.TaskExample1.assignedTo, {
+      id: 'user-001', name: 'Jane Smith', email: 'jane@example.gov'
+    });
+  });
+
+  await t.test('resolveExampleRelationships - applies fields subset', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: 'user-001' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'assignedToId',
+      expandedFieldName: 'assignedTo',
+      resource: 'User',
+      fields: ['id', 'name']
+    }];
+
+    const examplesIndex = new Map([
+      ['user-001', { id: 'user-001', name: 'Jane Smith', email: 'jane@example.gov', role: 'case_worker' }]
+    ]);
+
+    const { result } = resolveExampleRelationships(examplesData, expandRenames, examplesIndex);
+
+    assert.deepStrictEqual(result.TaskExample1.assignedTo, { id: 'user-001', name: 'Jane Smith' });
+    assert.strictEqual(result.TaskExample1.assignedTo.email, undefined);
+  });
+
+  await t.test('resolveExampleRelationships - warns and preserves UUID when related record not found', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: 'user-missing' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'assignedToId',
+      expandedFieldName: 'assignedTo',
+      resource: 'User',
+      fields: null
+    }];
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, expandRenames, new Map());
+
+    assert.strictEqual(warnings.length, 1);
+    assert.ok(warnings[0].includes('user-missing'));
+    assert.strictEqual(result.TaskExample1.assignedToId, undefined);
+    assert.strictEqual(result.TaskExample1.assignedTo, 'user-missing');
+  });
+
+  await t.test('resolveExampleRelationships - handles null FK gracefully', () => {
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: null }
+    };
+
+    const expandRenames = [{
+      propertyName: 'assignedToId',
+      expandedFieldName: 'assignedTo',
+      resource: 'User',
+      fields: null
+    }];
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, expandRenames, new Map());
+
+    assert.strictEqual(warnings.length, 0);
+    assert.strictEqual(result.TaskExample1.assignedTo, null);
+  });
+
+  await t.test('resolveExampleRelationships - skips records without the FK field', () => {
+    const examplesData = {
+      QueueExample1: { id: 'queue-001', name: 'SNAP intake' }
+    };
+
+    const expandRenames = [{
+      propertyName: 'assignedToId',
+      expandedFieldName: 'assignedTo',
+      resource: 'User',
+      fields: null
+    }];
+
+    const { result } = resolveExampleRelationships(examplesData, expandRenames, new Map());
+
+    assert.deepStrictEqual(result.QueueExample1, { id: 'queue-001', name: 'SNAP intake' });
   });
 });
