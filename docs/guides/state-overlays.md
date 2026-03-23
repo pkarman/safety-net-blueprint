@@ -190,15 +190,24 @@ Task:
 
 **expand** replaces the FK field with the related object, resolved at build time. The field is renamed (dropping the `Id` suffix) and the response shape is static — no query parameters needed.
 
-Without `fields` — the full related schema is included. Any `x-relationship` annotations on the related schema's own FK fields are also resolved, both in the schema and in example data; unannotated FK fields on the related schema remain as plain IDs.
+Without `fields` — the full related schema is included and example data is recursively expanded. If the related schema has its own `x-relationship` annotations, those FK fields are also expanded (in both schema and example data). Unannotated FK fields on the related schema remain as plain IDs.
 
 ```yaml
 # x-relationship: { resource: User, style: expand }
-# Result:
+# Schema result:
 Task:
   properties:
     assignedTo:
       $ref: '#/components/schemas/User'
+
+# Example data result (assuming User.teamId has x-relationship: { resource: Team, style: expand }):
+# TaskExample1.assignedTo:
+#   id: user-001
+#   name: Jane Smith
+#   team:           ← expanded because User.teamId also has x-relationship
+#     id: team-001
+#     name: Intake Team
+#   departmentId: dept-001   ← kept as plain ID — no x-relationship annotation
 ```
 
 With `fields` — an inline subset object is produced:
