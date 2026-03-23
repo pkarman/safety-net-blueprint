@@ -190,7 +190,7 @@ Task:
 
 **expand** replaces the FK field with the related object, resolved at build time. The field is renamed (dropping the `Id` suffix) and the response shape is static — no query parameters needed.
 
-Without `fields` — the full related schema is referenced as-is. No further expansion occurs: if `User` has FK fields of its own, they remain as plain IDs.
+Without `fields` — the full related schema is referenced via `$ref`. Any `x-relationship` annotations on the related schema's own FK fields are also resolved in the same pass; unannotated FK fields on the related schema remain as plain IDs.
 
 ```yaml
 # x-relationship: { resource: User, style: expand }
