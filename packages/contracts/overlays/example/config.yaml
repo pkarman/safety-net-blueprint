@@ -67,7 +67,7 @@ config:
   #
   # style values:
   #   links-only  — related resources as URL links            (default, implemented)
-  #   expand      — ?expand=resource query param to inline related data (implemented)
+  #   expand      — replaces FK field with related object at build time (implemented)
   #   include     — JSON:API-style `included` sideloading     (planned)
   #   embed       — always inline related resources in response (planned)
   #
