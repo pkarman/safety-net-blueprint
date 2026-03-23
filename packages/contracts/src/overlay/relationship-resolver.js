@@ -625,7 +625,14 @@ function resolveExampleRelationships(examplesData, expandRenames, examplesIndex,
           relatedRecord, fields, examplesIndex, `${exampleName}.${expandedFieldName}`, warnings
         );
       } else {
-        record[expandedFieldName] = { ...relatedRecord };
+        // No fields specified — use full related record, but also apply expand
+        // renames to it so its own FK fields are expanded (matching schema
+        // behavior where all annotations are resolved in the same pass).
+        const wrapped = { _: { ...relatedRecord } };
+        const { result: expanded } = resolveExampleRelationships(
+          wrapped, expandRenames, examplesIndex, []
+        );
+        record[expandedFieldName] = expanded._;
       }
     }
 

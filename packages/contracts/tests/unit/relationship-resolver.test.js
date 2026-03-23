@@ -1005,6 +1005,33 @@ test('relationship-resolver tests', async (t) => {
     });
   });
 
+  await t.test('resolveExampleRelationships - recursively expands FK fields on related record when no fields specified', () => {
+    // Task.assignedToId → User (no fields), User.teamId → Team (no fields)
+    // The full User record should have teamId expanded to team object
+    const examplesData = {
+      TaskExample1: { id: 'task-001', assignedToId: 'user-001' }
+    };
+
+    const expandRenames = [
+      { propertyName: 'assignedToId', expandedFieldName: 'assignedTo', resource: 'User', fields: null },
+      { propertyName: 'teamId', expandedFieldName: 'team', resource: 'Team', fields: null }
+    ];
+
+    const examplesIndex = new Map([
+      ['user-001', { id: 'user-001', name: 'Jane Smith', teamId: 'team-001' }],
+      ['team-001', { id: 'team-001', name: 'Intake Team' }]
+    ]);
+
+    const { result, warnings } = resolveExampleRelationships(examplesData, expandRenames, examplesIndex);
+
+    assert.strictEqual(warnings.length, 0);
+    assert.deepStrictEqual(result.TaskExample1.assignedTo, {
+      id: 'user-001',
+      name: 'Jane Smith',
+      team: { id: 'team-001', name: 'Intake Team' }
+    });
+  });
+
   await t.test('resolveExampleRelationships - applies fields subset', () => {
     const examplesData = {
       TaskExample1: { id: 'task-001', assignedToId: 'user-001' }
