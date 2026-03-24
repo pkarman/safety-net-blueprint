@@ -190,6 +190,49 @@ test('evaluateGuards — skips unknown guard names', () => {
   assert.strictEqual(result.pass, true);
 });
 
+test('evaluateGuards — any composition passes when at least one guard passes', () => {
+  const guardsMap = {
+    callerIsAssignedWorker: { field: 'assignedToId', operator: 'equals', value: '$caller.id' },
+    callerIsSupervisor: { field: '$caller.role', operator: 'equals', value: 'supervisor' },
+  };
+  const resource = { assignedToId: 'worker-1' };
+  const context = { caller: { id: 'worker-1', role: 'worker' } };
+  const result = evaluateGuards([{ any: ['callerIsAssignedWorker', 'callerIsSupervisor'] }], guardsMap, resource, context);
+  assert.strictEqual(result.pass, true);
+});
+
+test('evaluateGuards — any composition fails when no guards pass', () => {
+  const guardsMap = {
+    callerIsAssignedWorker: { field: 'assignedToId', operator: 'equals', value: '$caller.id' },
+    callerIsSupervisor: { field: '$caller.role', operator: 'equals', value: 'supervisor' },
+  };
+  const resource = { assignedToId: 'worker-1' };
+  const context = { caller: { id: 'worker-2', role: 'worker' } };
+  const result = evaluateGuards([{ any: ['callerIsAssignedWorker', 'callerIsSupervisor'] }], guardsMap, resource, context);
+  assert.strictEqual(result.pass, false);
+});
+
+test('evaluateGuards — all composition passes when every guard passes', () => {
+  const guardsMap = {
+    isAssigned: { field: 'assignedToId', operator: 'is_not_null' },
+    isActive: { field: 'status', operator: 'equals', value: 'in_progress' },
+  };
+  const resource = { assignedToId: 'worker-1', status: 'in_progress' };
+  const result = evaluateGuards([{ all: ['isAssigned', 'isActive'] }], guardsMap, resource, {});
+  assert.strictEqual(result.pass, true);
+});
+
+test('evaluateGuards — all composition fails when any guard fails', () => {
+  const guardsMap = {
+    isUnassigned: { field: 'assignedToId', operator: 'is_null' },
+    isActive: { field: 'status', operator: 'equals', value: 'in_progress' },
+  };
+  // isUnassigned fails because assignedToId is set
+  const resource = { assignedToId: 'worker-1', status: 'in_progress' };
+  const result = evaluateGuards([{ all: ['isUnassigned', 'isActive'] }], guardsMap, resource, {});
+  assert.strictEqual(result.pass, false);
+});
+
 // =============================================================================
 // findTransition
 // =============================================================================
