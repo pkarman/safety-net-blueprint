@@ -4,14 +4,18 @@
 
 import { findById, update } from '../database-manager.js';
 import { validate, createErrorResponse } from '../validator.js';
+import { applyEffects } from '../state-machine-engine.js';
+import { processRuleEvaluations } from './rule-evaluation.js';
 
 /**
  * Create update handler for a resource
  * @param {Object} apiMetadata - API metadata from OpenAPI spec
  * @param {Object} endpoint - Endpoint metadata
+ * @param {Object|null} stateMachine - State machine contract (for onUpdate effects)
+ * @param {Array} rules - Rules for rule evaluation effects
  * @returns {Function} Express handler
  */
-export function createUpdateHandler(apiMetadata, endpoint) {
+export function createUpdateHandler(apiMetadata, endpoint, stateMachine = null, rules = []) {
   const paramName = extractPathParam(endpoint.path);
   return (req, res) => {
     try {
@@ -25,7 +29,7 @@ export function createUpdateHandler(apiMetadata, endpoint) {
           message: `${capitalize(paramName.replace(/Id$/, ''))} not found`
         });
       }
-      
+
       // Check if request body is an object (400 for malformed request)
       if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
         return res.status(400).json({
@@ -34,7 +38,7 @@ export function createUpdateHandler(apiMetadata, endpoint) {
           details: [{ field: 'body', message: 'must be object' }]
         });
       }
-      
+
       // Check minProperties requirement for PATCH (at least 1 field)
       if (Object.keys(req.body).length === 0) {
         return res.status(400).json({
@@ -43,27 +47,46 @@ export function createUpdateHandler(apiMetadata, endpoint) {
           details: [{ field: 'body', message: 'minProperties: 1' }]
         });
       }
-      
+
       // For PATCH, merge with existing data first, then validate the complete merged object
       // This ensures the final result is valid while allowing partial updates
       const mergedData = { ...existing, ...req.body };
-      
+
       // Validate merged data (422 for validation errors)
       if (endpoint.requestSchema) {
         const { valid, errors } = validate(
-          mergedData, 
+          mergedData,
           endpoint.requestSchema,
           `${endpoint.collectionName}-update`
         );
-        
+
         if (!valid) {
           return res.status(422).json(createErrorResponse(errors, 422));
         }
       }
-      
+
       // Update in database (database manager handles deep merge and updatedAt timestamp)
       const updated = update(endpoint.collectionName, resourceId, req.body);
-      
+
+      // Fire onUpdate effects if any watched fields changed
+      if (stateMachine?.onUpdate?.effects?.length > 0) {
+        const watchedFields = stateMachine.onUpdate.fields;
+        const changedFields = Object.keys(req.body);
+        const shouldFire = !watchedFields || watchedFields.length === 0
+          || changedFields.some(f => watchedFields.includes(f));
+
+        if (shouldFire) {
+          const context = {
+            caller: { id: req.headers['x-caller-id'] },
+            object: { ...existing },
+            request: req.body,
+            now: new Date().toISOString(),
+          };
+          const { pendingRuleEvaluations } = applyEffects(stateMachine.onUpdate.effects, updated, context);
+          processRuleEvaluations(pendingRuleEvaluations, updated, rules, stateMachine.domain);
+        }
+      }
+
       res.json(updated);
     } catch (error) {
       console.error('Update handler error:', error);

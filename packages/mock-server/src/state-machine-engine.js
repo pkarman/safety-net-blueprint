@@ -139,9 +139,12 @@ export function evaluateGuards(guardNames, guardsMap, resource, context) {
  * @returns {{ transition: Object|null, error: string|null }}
  */
 export function findTransition(stateMachine, trigger, resource) {
-  const transition = stateMachine.transitions.find(
-    t => t.trigger === trigger && t.from === resource.status
-  );
+  const transition = stateMachine.transitions.find(t => {
+    if (t.trigger !== trigger) return false;
+    return Array.isArray(t.from)
+      ? t.from.includes(resource.status)
+      : t.from === resource.status;
+  });
 
   if (transition) {
     return { transition, error: null };

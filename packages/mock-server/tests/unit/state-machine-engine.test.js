@@ -265,6 +265,28 @@ test('findTransition — returns error for unknown trigger', () => {
   assert.ok(error.includes('Unknown trigger'));
 });
 
+test('findTransition — matches when from is an array and status is in it', () => {
+  const sm = {
+    transitions: [
+      { trigger: 'cancel', from: ['pending', 'in_progress', 'escalated'], to: 'cancelled', guards: [], effects: [] }
+    ]
+  };
+  const { transition, error } = findTransition(sm, 'cancel', { status: 'in_progress' });
+  assert.ok(transition);
+  assert.strictEqual(error, null);
+});
+
+test('findTransition — returns error when from is an array and status is not in it', () => {
+  const sm = {
+    transitions: [
+      { trigger: 'cancel', from: ['pending', 'in_progress', 'escalated'], to: 'cancelled', guards: [], effects: [] }
+    ]
+  };
+  const { transition, error } = findTransition(sm, 'cancel', { status: 'completed' });
+  assert.strictEqual(transition, null);
+  assert.ok(error);
+});
+
 // =============================================================================
 // applySetEffect
 // =============================================================================
