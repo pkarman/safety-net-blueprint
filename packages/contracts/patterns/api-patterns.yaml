@@ -384,6 +384,8 @@ schema_patterns:
       description: |
         Every FK field must declare which resource it references. Style defaults to
         links-only and can be overridden via state overlay.
+        Use resource: External for fields that identify records in systems outside
+        the blueprint (e.g., vendor case IDs). The seed generator skips External fields.
     examples:
       - field: personId
         type: string
@@ -397,12 +399,19 @@ schema_patterns:
         description: Reference to the Application record
         x-relationship:
           resource: Application
+      - field: externalVendorId
+        type: string
+        format: uuid
+        description: References a record in the state's vendor case management system
+        x-relationship:
+          resource: External
     validation:
       - error: FK field missing x-relationship annotation
         condition: field ends in 'Id', has format uuid, and lacks x-relationship
       - Tooling detects FK fields when field ends in 'Id' and has format: uuid
       - The schema name is derived by removing 'Id' suffix and capitalizing
       - Works for both top-level properties and nested array items
+      - resource: External is a reserved value — seed generator skips these fields
 
 # =============================================================================
 # File Structure# =============================================================================
