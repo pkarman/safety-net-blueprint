@@ -50,7 +50,10 @@ export function createCreateHandler(apiMetadata, endpoint, baseUrl, stateMachine
         const callerId = req.headers['x-caller-id'] || 'system';
         const now = new Date().toISOString();
         const context = {
-          caller: { id: callerId },
+          caller: {
+            id: callerId,
+            role: req.headers['x-caller-role'] || null
+          },
           object: { ...resource },
           request: req.body || {},
           now

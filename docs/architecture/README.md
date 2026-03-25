@@ -4,6 +4,11 @@ This directory contains architecture documentation for the Safety Net Benefits A
 
 > **Status: Work in progress** — The system is being designed incrementally, domain by domain.
 
+## Guiding principles
+
+1. **Match industry and domain patterns.** Evaluate design decisions against what major vendors (JSM, ServiceNow, IBM Curam, Salesforce Government Cloud) and states are doing in the safety net benefits space. Prefer established patterns and document vendor comparisons in domain-level design references.
+2. **Prioritize flexibility and extensibility.** Baseline contracts are a starting point for states to customize, not a fixed prescription. Prefer overlay points, configurable values, and compositional patterns over hardcoded behavior. When a design decision constrains extensibility, document it explicitly.
+
 ## How this documentation is organized
 
 | Document | What it covers |

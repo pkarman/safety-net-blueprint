@@ -88,7 +88,9 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules) {
       description = 'Create resource';
     } else if (method === 'patch' && isItemEndpoint(endpoint.path)) {
       // PATCH /resources/{id} - Update
-      handler = createUpdateHandler(apiMetadata, endpointWithCollection);
+      const smForEndpoint = stateMachine?.object?.toLowerCase() + 's' === collectionName
+        ? stateMachine : null;
+      handler = createUpdateHandler(apiMetadata, endpointWithCollection, smForEndpoint, rules);
       description = 'Update resource';
     } else if (method === 'delete' && isItemEndpoint(endpoint.path)) {
       // DELETE /resources/{id} - Delete

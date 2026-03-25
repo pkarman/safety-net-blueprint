@@ -89,16 +89,42 @@ export function evaluateGuards(guardNames, guardsMap, resource, context) {
     return { pass: true, failedGuard: null, reason: null };
   }
 
-  for (const name of guardNames) {
-    const guard = guardsMap[name];
-    if (!guard) {
-      console.warn(`Guard "${name}" not found in guards map — skipping`);
+  for (const item of guardNames) {
+    // Composition: { any: [...] } — at least one must pass (OR)
+    if (item && typeof item === 'object' && item.any) {
+      const passed = item.any.some(name => {
+        const guard = guardsMap[name];
+        if (!guard) { console.warn(`Guard "${name}" not found in guards map — skipping`); return false; }
+        return evaluateGuard(guard, resource, context).pass;
+      });
+      if (!passed) {
+        return { pass: false, failedGuard: `any(${item.any.join(', ')})`, reason: 'None of the required guards passed' };
+      }
       continue;
     }
 
+    // Composition: { all: [...] } — all must pass (AND)
+    if (item && typeof item === 'object' && item.all) {
+      for (const name of item.all) {
+        const guard = guardsMap[name];
+        if (!guard) { console.warn(`Guard "${name}" not found in guards map — skipping`); continue; }
+        const result = evaluateGuard(guard, resource, context);
+        if (!result.pass) {
+          return { pass: false, failedGuard: name, reason: result.reason };
+        }
+      }
+      continue;
+    }
+
+    // Plain named guard
+    const guard = guardsMap[item];
+    if (!guard) {
+      console.warn(`Guard "${item}" not found in guards map — skipping`);
+      continue;
+    }
     const result = evaluateGuard(guard, resource, context);
     if (!result.pass) {
-      return { pass: false, failedGuard: name, reason: result.reason };
+      return { pass: false, failedGuard: item, reason: result.reason };
     }
   }
 
@@ -113,9 +139,12 @@ export function evaluateGuards(guardNames, guardsMap, resource, context) {
  * @returns {{ transition: Object|null, error: string|null }}
  */
 export function findTransition(stateMachine, trigger, resource) {
-  const transition = stateMachine.transitions.find(
-    t => t.trigger === trigger && t.from === resource.status
-  );
+  const transition = stateMachine.transitions.find(t => {
+    if (t.trigger !== trigger) return false;
+    return Array.isArray(t.from)
+      ? t.from.includes(resource.status)
+      : t.from === resource.status;
+  });
 
   if (transition) {
     return { transition, error: null };

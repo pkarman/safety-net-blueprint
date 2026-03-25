@@ -182,13 +182,53 @@ function parseJsonField(val) {
   }
 }
 
+/**
+ * Parse a `from` cell — "state1 | state2" becomes an array; plain strings stay as-is.
+ * Also handles legacy comma-separated values (old format before pipe separator).
+ */
+function parseFrom(from) {
+  if (!from) return '';
+  if (from.includes(' | ')) return from.split(' | ').map(s => s.trim());
+  return from;
+}
+
+/**
+ * Parse a single guard string — "any: g1, g2" becomes { any: ['g1', 'g2'] },
+ * "all: g1, g2" becomes { all: ['g1', 'g2'] }, otherwise returns the string as-is.
+ */
+function parseGuardItem(g) {
+  const trimmed = g.trim();
+  const anyMatch = trimmed.match(/^any:\s*(.+)$/);
+  if (anyMatch) return { any: anyMatch[1].split(',').map(s => s.trim()) };
+  const allMatch = trimmed.match(/^all:\s*(.+)$/);
+  if (allMatch) return { all: allMatch[1].split(',').map(s => s.trim()) };
+  return trimmed;
+}
+
+/** Normalize a `from` value to a string for comparison (arrays sorted and joined). */
+function normalizeFrom(from) {
+  if (Array.isArray(from)) return [...from].sort().join(' | ');
+  return from || '';
+}
+
 function importTransitions(csvData, existingDoc) {
   const doc = { ...existingDoc };
   const transitions = [];
   let onCreate = null;
 
+  // Detect whether CSV uses new format (with On/After/RelativeTo/CalendarType columns)
+  const headers = csvData.headers || [];
+  const hasTimerColumns = headers.includes('On');
+
   for (const row of csvData.data) {
-    const [from, to, trigger, actors, guards, effects] = row;
+    let from, to, trigger, on, after, relativeTo, calendarType, actors, guards;
+
+    if (hasTimerColumns) {
+      [from, to, trigger, on, after, relativeTo, calendarType, actors, guards] = row;
+    } else {
+      // Legacy 6-column format: From, To, Trigger, Actors, Guards, Effects
+      [from, to, trigger, actors, guards] = row;
+    }
 
     if (from === '(create)') {
       onCreate = {
@@ -198,19 +238,42 @@ function importTransitions(csvData, existingDoc) {
       continue;
     }
 
+    const parsedFrom = parseFrom(from);
+
     // Find matching existing transition to preserve full effects
-    const existingTransition = (existingDoc.transitions || []).find(
-      t => t.trigger === trigger && t.from === from && t.to === to
+    const existingTransition = (existingDoc.transitions || []).find(t =>
+      t.trigger === trigger &&
+      normalizeFrom(t.from) === normalizeFrom(parsedFrom) &&
+      t.to === to
     );
 
-    transitions.push({
+    const transition = {
       trigger,
-      from,
+      from: parsedFrom,
       to,
-      actors: actors ? actors.split('; ').map(a => a.trim()).filter(Boolean) : [],
-      guards: guards ? guards.split('; ').map(g => g.trim()).filter(Boolean) : [],
-      effects: existingTransition?.effects || [],
-    });
+    };
+
+    // Preserve timer fields from CSV (new format) or existing YAML (legacy format)
+    const timerOn = on || existingTransition?.on;
+    if (timerOn) {
+      transition.on = timerOn;
+      transition.after = after || existingTransition?.after;
+      transition.relativeTo = relativeTo || existingTransition?.relativeTo;
+      if (calendarType || existingTransition?.calendarType) {
+        transition.calendarType = calendarType || existingTransition?.calendarType;
+      }
+    }
+
+    transition.actors = actors ? actors.split('; ').map(a => a.trim()).filter(Boolean) : [];
+
+    const parsedGuards = guards
+      ? guards.split('; ').map(parseGuardItem).filter(Boolean)
+      : (existingTransition?.guards || []);
+    if (parsedGuards.length > 0) transition.guards = parsedGuards;
+
+    transition.effects = existingTransition?.effects || [];
+
+    transitions.push(transition);
   }
 
   doc.transitions = transitions;

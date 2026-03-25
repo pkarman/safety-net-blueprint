@@ -134,6 +134,7 @@ Four categories of operational metrics, with the prototype proving one metric fr
 
 | Document | Description |
 |----------|-------------|
+| [Workflow Design Reference](workflow-design-reference.md) | Feature-by-feature reference: vendor comparisons, design decisions, customization points |
 | [Workflow Prototype](../../prototypes/workflow-prototype.md) | Full design — 9 states, 12 transitions, rules, metrics |
 | [Domain Design](../domain-design.md) | Workflow section in the domain overview |
 | [Case Management](case-management.md) | Staff, teams, offices — closely related domain |

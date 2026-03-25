@@ -190,6 +190,49 @@ test('evaluateGuards — skips unknown guard names', () => {
   assert.strictEqual(result.pass, true);
 });
 
+test('evaluateGuards — any composition passes when at least one guard passes', () => {
+  const guardsMap = {
+    callerIsAssignedWorker: { field: 'assignedToId', operator: 'equals', value: '$caller.id' },
+    callerIsSupervisor: { field: '$caller.role', operator: 'equals', value: 'supervisor' },
+  };
+  const resource = { assignedToId: 'worker-1' };
+  const context = { caller: { id: 'worker-1', role: 'worker' } };
+  const result = evaluateGuards([{ any: ['callerIsAssignedWorker', 'callerIsSupervisor'] }], guardsMap, resource, context);
+  assert.strictEqual(result.pass, true);
+});
+
+test('evaluateGuards — any composition fails when no guards pass', () => {
+  const guardsMap = {
+    callerIsAssignedWorker: { field: 'assignedToId', operator: 'equals', value: '$caller.id' },
+    callerIsSupervisor: { field: '$caller.role', operator: 'equals', value: 'supervisor' },
+  };
+  const resource = { assignedToId: 'worker-1' };
+  const context = { caller: { id: 'worker-2', role: 'worker' } };
+  const result = evaluateGuards([{ any: ['callerIsAssignedWorker', 'callerIsSupervisor'] }], guardsMap, resource, context);
+  assert.strictEqual(result.pass, false);
+});
+
+test('evaluateGuards — all composition passes when every guard passes', () => {
+  const guardsMap = {
+    isAssigned: { field: 'assignedToId', operator: 'is_not_null' },
+    isActive: { field: 'status', operator: 'equals', value: 'in_progress' },
+  };
+  const resource = { assignedToId: 'worker-1', status: 'in_progress' };
+  const result = evaluateGuards([{ all: ['isAssigned', 'isActive'] }], guardsMap, resource, {});
+  assert.strictEqual(result.pass, true);
+});
+
+test('evaluateGuards — all composition fails when any guard fails', () => {
+  const guardsMap = {
+    isUnassigned: { field: 'assignedToId', operator: 'is_null' },
+    isActive: { field: 'status', operator: 'equals', value: 'in_progress' },
+  };
+  // isUnassigned fails because assignedToId is set
+  const resource = { assignedToId: 'worker-1', status: 'in_progress' };
+  const result = evaluateGuards([{ all: ['isUnassigned', 'isActive'] }], guardsMap, resource, {});
+  assert.strictEqual(result.pass, false);
+});
+
 // =============================================================================
 // findTransition
 // =============================================================================
@@ -220,6 +263,28 @@ test('findTransition — returns error for unknown trigger', () => {
   const { transition, error } = findTransition(sampleStateMachine, 'unknown', { status: 'pending' });
   assert.strictEqual(transition, null);
   assert.ok(error.includes('Unknown trigger'));
+});
+
+test('findTransition — matches when from is an array and status is in it', () => {
+  const sm = {
+    transitions: [
+      { trigger: 'cancel', from: ['pending', 'in_progress', 'escalated'], to: 'cancelled', guards: [], effects: [] }
+    ]
+  };
+  const { transition, error } = findTransition(sm, 'cancel', { status: 'in_progress' });
+  assert.ok(transition);
+  assert.strictEqual(error, null);
+});
+
+test('findTransition — returns error when from is an array and status is not in it', () => {
+  const sm = {
+    transitions: [
+      { trigger: 'cancel', from: ['pending', 'in_progress', 'escalated'], to: 'cancelled', guards: [], effects: [] }
+    ]
+  };
+  const { transition, error } = findTransition(sm, 'cancel', { status: 'completed' });
+  assert.strictEqual(transition, null);
+  assert.ok(error);
 });
 
 // =============================================================================
