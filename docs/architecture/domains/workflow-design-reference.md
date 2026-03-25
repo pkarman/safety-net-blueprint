@@ -392,9 +392,14 @@ Guards reference caller context via `$caller.*` variables. The conventions used 
 
 | Variable | Expected values | Used in |
 |---|---|---|
-| `$caller.id` | UUID of the authenticated user | `callerIsAssignedWorker` |
-| `$caller.role` | `caseworker`, `supervisor` | `callerIsSupervisor`, `callerIsAssignedWorkerOrSupervisor` |
-| `$caller.type` | `human`, `system` | `callerIsSystem` |
+| `$caller.id` | UUID of the authenticated user or service account | `callerIsAssignedWorker` |
+| `$caller.role` | `caseworker`, `supervisor`, `system` | `callerIsSupervisor`, `callerIsSystem` |
+
+`system` is a valid role value rather than a separate `type` dimension. JSM and ServiceNow use roles or service accounts to distinguish automated callers — a separate type field adds a dimension without additional expressiveness.
+
+**In the mock server**, caller context is supplied via request headers:
+- `X-Caller-Id` — required for all state transitions; the caller's identifier
+- `X-Caller-Role` — optional; values: `caseworker`, `supervisor`, `system`. Guards that check `$caller.role` (e.g., `callerIsSupervisor`) will fail if this header is omitted.
 
 **In safety net benefits processing:**
 

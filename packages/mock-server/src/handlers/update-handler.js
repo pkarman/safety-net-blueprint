@@ -77,7 +77,10 @@ export function createUpdateHandler(apiMetadata, endpoint, stateMachine = null, 
 
         if (shouldFire) {
           const context = {
-            caller: { id: req.headers['x-caller-id'] },
+            caller: {
+              id: req.headers['x-caller-id'],
+              role: req.headers['x-caller-role'] || null
+            },
             object: { ...existing },
             request: req.body,
             now: new Date().toISOString(),

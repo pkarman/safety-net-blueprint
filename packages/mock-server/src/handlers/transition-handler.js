@@ -51,7 +51,10 @@ export function createTransitionHandler(resourceName, stateMachine, trigger, par
       // Evaluate guards
       const now = new Date().toISOString();
       const context = {
-        caller: { id: callerId },
+        caller: {
+          id: callerId,
+          role: req.headers['x-caller-role'] || null
+        },
         object: { ...resource },  // Pre-transition snapshot
         request: req.body || {},
         now

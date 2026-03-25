@@ -99,7 +99,7 @@ Guards are conditions checked before a transition fires. A transition will not e
 | `taskIsUnassigned` | `assignedToId` is not set |
 | `callerIsAssignedWorker` | `assignedToId` = `$caller.id` |
 | `callerIsSupervisor` | `$caller.role` = `supervisor` |
-| `callerIsSystem` | `$caller.type` = `system` |
+| `callerIsSystem` | `$caller.role` = `system` |
 
 ---
 

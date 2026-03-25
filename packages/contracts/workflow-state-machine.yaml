@@ -34,7 +34,7 @@ guards:
     operator: equals
     value: supervisor
   callerIsSystem:
-    field: $caller.type
+    field: $caller.role
     operator: equals
     value: system
 transitions:
