@@ -28,7 +28,7 @@ The task status enum defines the complete set of states a task can occupy. State
 - **The SLA clock keeps running in `escalated` — urgency does not pause the agency's regulatory obligation.** Compare to `awaiting_client`, which pauses the clock because the delay is attributable to an external party.
 
 **Customization points:**
-- States can add their own status values via overlay (e.g., `awaiting_supervisor`, `returned`).
+- States can add their own status values via overlay (e.g., `awaiting_supervisor`, `pended`).
 - `slaClock` behavior per state can be overridden (e.g., a state may prefer to stop rather than pause the clock for `awaiting_client`, treating client delay as the client's time to spend).
 - States needing tiered escalation (L1 → L2 → L3, as in JSM and ServiceNow) can add intermediate escalation states via overlay (e.g., `escalated_l2`, `escalated_supervisor`, `escalated_director`) with their own transitions and guards.
 
