@@ -121,6 +121,68 @@ The entire property definition (type, description, pattern, enum, etc.) is prese
 - You want to align API field names with state system field names
 - The base schema uses a generic name that should be state-specific
 
+### Append to an Array
+
+Add items to an existing array without replacing the baseline items. This is a custom extension and is the main way to extend behavioral YAML arrays (transitions, rules, SLA types, metrics):
+
+```yaml
+- target: $.slaTypes
+  description: Add TANF standard SLA type
+  append:
+    - id: tanf_standard
+      name: TANF Standard
+      durationDays: 45
+      warningThresholdPercent: 75
+```
+
+Use `append:` when you want to extend the baseline. Use `update:` when you want to replace the array entirely.
+
+## Behavioral YAML Targets
+
+The same overlay mechanism works for behavioral YAML files — state machines, rules, SLA types, and metrics — not just OpenAPI specs. A single overlay file can target both:
+
+```yaml
+actions:
+  - target: $.Person.properties.status.enum   # OpenAPI target
+    description: Use state-specific status values
+    update: [active, inactive, pending_review]
+
+  - target: $.slaTypes[?(@.id == 'snap_expedited')].durationDays  # behavioral target
+    description: Extend SNAP expedited deadline per state waiver
+    update: 10
+```
+
+The resolver automatically routes each action to the correct file based on which file contains the target path. No `file:` property needed unless the same path exists in multiple files.
+
+### Filter Expressions
+
+To target a specific item in a behavioral YAML array, use a filter expression:
+
+```
+$.arrayName[?(@.field == 'value')].propertyToModify
+```
+
+**Modify a specific SLA type:**
+
+```yaml
+- target: $.slaTypes[?(@.id == 'snap_expedited')].durationDays
+  description: Extend SNAP expedited to 10 days per state waiver
+  update: 10
+```
+
+**Remove a specific metric:**
+
+```yaml
+- target: $.metrics[?(@.id == 'release_rate')]
+  description: Remove release_rate metric (not tracked in this state)
+  remove: true
+```
+
+Filter expressions support string, numeric, and boolean values:
+- `[?(@.id == 'snap_expedited')]` — string match
+- `[?(@.order == 1)]` — numeric match
+- `[?(@.enabled == true)]` — boolean match
+
 ## Relationship Configuration
 
 FK fields in the base specs are plain string IDs. States can declare how related resources are represented in responses by adding `x-relationship` to FK fields via overlays. The resolver transforms the spec at build time based on the chosen style.
@@ -281,6 +343,9 @@ Targets use JSONPath-like syntax:
 | `$.Person.properties.status` | Specific property |
 | `$.Person.properties.status.enum` | Enum values |
 | `$.Application.properties.programs.items` | Array item schema |
+| `$.slaTypes` | Top-level array in a behavioral YAML |
+| `$.slaTypes[?(@.id == 'snap_expedited')]` | Specific item in a behavioral YAML array |
+| `$.slaTypes[?(@.id == 'snap_expedited')].durationDays` | Property of a specific array item |
 
 ## Creating a New State Overlay
 
