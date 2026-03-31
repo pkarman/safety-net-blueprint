@@ -97,7 +97,7 @@ The distinction between `paused` (clock resumes from same point) and `stopped` (
 
 Transitions define valid state changes. Each transition has a trigger (which becomes an RPC endpoint), optional guards (preconditions), and effects (side effects that fire when the transition executes).
 
-**We support:** `set`, `create`, `evaluate-rules`, `event`, `lookup` effect types; `when` (JSON Logic) for conditional effects; actor-triggered and timer-triggered transitions.
+**We support:** `set`, `create`, `evaluate-rules`, `event` effect types; `when` (JSON Logic) for conditional effects; actor-triggered and timer-triggered transitions.
 
 | Concept | JSM | ServiceNow | Camunda | WS-HumanTask |
 |---|---|---|---|---|
@@ -338,32 +338,36 @@ Domain events serve two roles in benefits programs: audit trail and cross-domain
 | Skill-based assignment | Round-robin, least-loaded, skill-match routing | Rules engine supports it; no built-in actions yet |
 | Notification effects | Notify client on `await-client`; notify supervisor on escalation | Out of scope; cross-cutting concern (communication domain) |
 | `$caller.role` enforcement | Role checks are named stubs; see [Role-based access control](#role-based-access-control) | Planned |
-| SLA clock enforcement | `slaClock` values are defined on all states; enforcement not yet implemented; see [SLA clock enforcement](#sla-clock-enforcement) | Planned |
 | Cross-domain task creation | Application submitted → review task auto-created; see [Cross-domain event wiring](#cross-domain-event-wiring) | Planned |
 
 ---
 
-## SLA clock enforcement
+## SLA types and clock management
 
-> **Status: Planned.** The `slaClock` values on states are in place. The enforcement logic is not yet implemented.
+SLA types define program-specific processing deadlines and the conditions under which the clock pauses or resumes. They are declared in a separate `*-sla-types.yaml` file, independent of the state machine.
 
-The SLA clock enforcement service reads `slaClock` values from the state machine and manages a per-task clock that tracks time against a program-specific deadline. It is responsible for:
+**We support:** `*-sla-types.yaml` per domain; `autoAssignWhen` (JSON Logic condition evaluated at creation); `pauseWhen` / `resumeWhen` (JSON Logic conditions evaluated on every transition); `warningThresholdPercent` (percentage of deadline elapsed before status → `warning`)
 
-- Starting the clock when a task is created
-- Pausing the clock when a task enters `awaiting_client` or `awaiting_verification`
-- Resuming the clock when a task returns to `in_progress` via `resume` or `system-resume`
-- Stopping the clock when a task reaches `completed` or `cancelled`
-- Providing the `slaDeadline` value used by timer-triggered transitions (e.g., `auto-escalate-sla-warning`)
+| Concept | JSM | ServiceNow | IBM Curam | Salesforce Gov Cloud |
+|---|---|---|---|---|
+| SLA definition | SLA agreement (separate record) | SLA Definition (separate record) | Process deadline on case | Milestone on entitlement |
+| Multiple SLAs per record | Yes — multiple agreements can apply | Yes — multiple SLA records can attach | Typically one deadline per process | Multiple milestones per case |
+| Auto-attach conditions | Automation rule conditions | SLA Definition conditions (scripted/GUI) | Configured at process design time | Entitlement criteria |
+| Pause/resume | "Pending" sub-status excludes from timer | On-hold condition scripts | Not granular; handled at process level | Milestone pause conditions |
+| Warning before breach | Warning percentage on SLA agreement | Warning threshold on SLA Definition | Not built-in | Milestone warning time |
 
-**Interface with the state machine:**
+**Baseline SLA types in `workflow-sla-types.yaml`:**
 
-- `slaClock: running | paused | stopped` on each state — declaration of intent consumed by the SLA service
-- `relativeTo: slaDeadline` on timer transitions — requires the SLA service to expose the deadline as a resolvable value
-- `lookup` effect type — planned mechanism for transitions to retrieve SLA configuration (deadline length by program type and task type)
+| SLA type | Duration | Warning threshold | Pauses when |
+|---|---|---|---|
+| `snap_expedited` | 7 days | 75% elapsed | `awaiting_client` or `awaiting_verification` |
+| `snap_standard` | 30 days | 75% elapsed | `awaiting_client` or `awaiting_verification` |
+| `medicaid_standard` | 45 days | 75% elapsed | `awaiting_client` or `awaiting_verification` |
+| `medicaid_disability` | 90 days | 75% elapsed | `awaiting_client` or `awaiting_verification` |
 
 **In safety net benefits processing:**
 
-SLA deadlines vary by program and task type. The service must be configurable per state:
+Federal regulations require accurate accounting of processing time. The SNAP regulations explicitly distinguish between time the agency is responsible for and time attributable to client non-response or third-party verification delays — making pause vs. stop behavior a compliance question, not just a design preference.
 
 | Program | Standard deadline | Expedited deadline |
 |---|---|---|
@@ -372,7 +376,20 @@ SLA deadlines vary by program and task type. The service must be configurable pe
 | TANF / Cash assistance | Varies by state (typically 30–45 days) | — |
 | CHIP | 45 calendar days | — |
 
-States configure deadline lengths via SLA type definitions. The baseline provides illustrative values; states are expected to supply their own via overlay.
+**Design decisions:**
+
+- **SLA types in a separate file, not inline in the state machine.** JSM and ServiceNow store SLA definitions as separate database records — decoupled from workflow configuration. We follow that model: `*-sla-types.yaml` is independently replaceable per state without touching the state machine. A state with different program mixes (e.g., CHIP-heavy) can drop in their own types file. This is a direct extensibility choice over embedding deadlines as constants in the state machine.
+- **Multiple SLA types per task, not one.** A single task may be subject to both an expedited and a standard SLA deadline depending on how it is classified. JSM and ServiceNow both support multiple SLA records per work item. IBM Curam's single-deadline-per-process model is less flexible for multi-program tasks. We follow the JSM/ServiceNow pattern.
+- **`autoAssignWhen` uses JSON Logic evaluated at task creation.** ServiceNow auto-attaches SLA records based on conditions defined on the SLA Definition. JSM uses automation rules. We use JSON Logic for consistency with the rest of the behavioral engine — no second condition language. `isExpedited == true` on the task causes `snap_expedited` to attach automatically.
+- **`pauseWhen` / `resumeWhen` use JSON Logic, not state-based declarations.** The [SLA clock management](#sla-clock-management) section declares intent (`slaClock: paused` on states). The SLA types layer is the enforcement mechanism. We chose JSON Logic conditions rather than hardcoding a list of states for two reasons: (1) different SLA types can have different pause behavior on the same state — a state might pause `snap_standard` but not `snap_expedited` during `awaiting_client`; (2) states can override pause behavior without modifying the state machine. ServiceNow's on-hold conditions work the same way — scripted conditions rather than a fixed state mapping.
+- **`pauseWhen` pauses rather than stops the clock.** Pausing preserves the original deadline and resumes from the same point. Stopping would grant a fresh deadline window on each block/resume cycle — distorting federal SLA reporting. Federal SNAP regulations treat client-caused delays as excluded time, not time that resets the agency's clock. JSM and ServiceNow default to pause (accumulated time preserved) for the same reason.
+- **`warningThresholdPercent` is a percentage, not a fixed offset.** A fixed offset (e.g., "2 days before deadline") would need a different value per SLA type — 2 days before a 7-day deadline is much more urgent than 2 days before a 90-day deadline. A percentage scales correctly: 75% of 7 days ≈ 5.25 days; 75% of 90 days = 67.5 days. ServiceNow uses the same percentage model on SLA Definitions.
+- **`slaTypeCode` is an untyped string in the base OpenAPI contract.** The valid enum of codes comes from `*-sla-types.yaml`, which varies by state. Hardcoding the enum in the base spec would conflict with state overlays that add or replace SLA types. The resolve pipeline will inject the correct enum from the types file at build time (issue #175) — same pattern used elsewhere for overlay-driven enum injection.
+
+**Customization points:**
+- States will replace or extend SLA types via overlay once issue #174 lands. Until then, `workflow-sla-types.yaml` can be replaced directly in a state fork of the contracts.
+- `pauseWhen` conditions can be tightened or loosened per regulatory interpretation — some states treat `awaiting_client` as the client's time to spend (stopping rather than pausing the clock) and can express that without touching the state machine.
+- `autoAssignWhen` logic can be adjusted to match state-specific program routing criteria (e.g., attach `snap_expedited` when household income is below the expedited threshold, not just when `isExpedited` is set).
 
 ---
 

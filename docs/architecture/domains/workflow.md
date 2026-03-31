@@ -1,6 +1,6 @@
 # Workflow Domain
 
-> **Status:** Task, Queue, and Events APIs implemented (alpha). State machine engine supports transitions, guards, `set`, `create`, `evaluate-rules`, and `event` effects with conditional execution via `when` clauses. Rule evaluation engine handles assignment and priority rules. Additional entities and behavioral artifacts (metrics) are future work. The [workflow prototype](../../prototypes/workflow-prototype.md) designs the full set of patterns.
+> **Status:** Task, Queue, and Events APIs implemented (alpha). State machine engine supports transitions, guards, `set`, `create`, `evaluate-rules`, and `event` effects with conditional execution via `when` clauses. Rule evaluation engine handles assignment and priority rules. SLA tracking is live — tasks carry `slaInfo` entries computed from `workflow-sla-types.yaml` on every transition. Metrics contract and `GET /metrics` endpoint are implemented. The [workflow prototype](../../prototypes/workflow-prototype.md) designs the full set of patterns.
 
 See [Domain Design Overview](../domain-design.md) for context and [Contract-Driven Architecture](../contract-driven-architecture.md) for the contract approach.
 
@@ -79,9 +79,9 @@ The task lifecycle defines 12 transitions across 9 states. 4 transitions are imp
 Key behavioral patterns:
 - Each transition trigger becomes an RPC API endpoint (e.g., `claim` -> `POST /workflow/tasks/:id/claim`)
 - Guards enforce preconditions (e.g., task is unassigned, caller has required skills)
-- Effects include: `set` (update fields), `create` (create related records), `evaluate-rules` (routing/priority), `event` (domain events), `lookup` (SLA config, planned)
+- Effects include: `set` (update fields), `create` (create related records), `evaluate-rules` (routing/priority), `event` (domain events)
 - Conditional effects: `when` clause (JSON Logic) on any effect — fires only when the condition matches the request or resource context
-- SLA clock pauses on `awaiting_client` and `awaiting_verification` states (planned)
+- SLA clock pauses on `awaiting_client` and `awaiting_verification` states via `pauseWhen` JSON Logic in `workflow-sla-types.yaml`
 
 ## Customization
 
@@ -91,36 +91,25 @@ The baseline rules are a starting point — states replace them with their own p
 
 ### Additional Task Fields
 
-Future fields include SLA tracking, subtasks, and dependencies. These are designed in the [workflow prototype](../../prototypes/workflow-prototype.md) and based on [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html), [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html), [Camunda](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/), ServiceNow, and [BPMN](https://www.bpmn.org/) patterns.
+Future fields include subtasks and dependencies. These are designed in the [workflow prototype](../../prototypes/workflow-prototype.md) and based on [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html), [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html), [Camunda](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/), ServiceNow, and [BPMN](https://www.bpmn.org/) patterns.
 
 ### Additional Entities
 
 | Entity | Purpose | Industry Source |
 |--------|---------|----------------|
 | **TaskType** | Task categorization config | ServiceNow: Category; Camunda: Task Definition Key; WS-HumanTask: Task Definition |
-| **SLAType** | SLA deadline config by program and task type | ServiceNow: [SLA Definition](https://www.emergys.com/blog/service-level-agreement-sla-for-servicenow/); WS-HumanTask: Deadline/Escalation |
 | **VerificationTask** | Verify data against external sources | Benefits-domain-specific — no equivalent in generic workflow standards |
 | **VerificationSource** | External verification API registry (IRS, ADP, state databases) | Benefits-domain-specific integration pattern |
-
-### Metrics
-
-Four categories of operational metrics, with the prototype proving one metric from each source type:
-
-| Category | Examples | Source Types |
-|----------|----------|-------------|
-| Task metrics | Time to claim, completion time, queue depth | Duration, state count |
-| SLA metrics | Breach rate, at-risk count | Transition count, state count |
-| Assignment metrics | Release rate, reassignment rate | Transition count |
-| Verification metrics | Success rate, latency, match rate | Transition count, duration |
 
 ## Contract Artifacts
 
 | Artifact | Status | Notes |
 |----------|--------|-------|
 | OpenAPI spec | Alpha | `workflow-openapi.yaml` — Task CRUD, Queue CRUD, Events (read-only). Additional entities in future issues |
-| State machine YAML | Alpha | `workflow-state-machine.yaml` — 4 transitions with guards, `set`/`create`/`evaluate-rules`/`event` effects, `when` conditional execution. 8 more planned. See [workflow prototype](../../prototypes/workflow-prototype.md) |
-| Rules YAML | Alpha | `workflow-rules.yaml` — Assignment and priority rule sets with JSON Logic conditions. See [Customizing Rules](#customizing-rules) |
-| Metrics YAML | Draft | 4 metric categories; designed in prototype, not yet implemented |
+| State machine YAML | Alpha | `workflow-state-machine.yaml` — All 9 states and 12 transitions with guards, `set`/`create`/`evaluate-rules`/`event` effects, `when` conditional execution. See [workflow prototype](../../prototypes/workflow-prototype.md) |
+| Rules YAML | Alpha | `workflow-rules.yaml` — Assignment and priority rule sets with JSON Logic conditions |
+| SLA types YAML | Alpha | `workflow-sla-types.yaml` — 4 baseline SLA types (SNAP expedited/standard, Medicaid standard/disability) with `pauseWhen` conditions |
+| Metrics YAML | Alpha | `workflow-metrics.yaml` — 5 baseline metrics: task time to claim, tasks in queue, release rate, SLA breach rate, SLA warning rate. See [Metrics](../cross-cutting/metrics.md) |
 
 ## Key Design Questions
 
