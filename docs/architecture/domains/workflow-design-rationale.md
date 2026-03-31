@@ -21,8 +21,6 @@ The task status enum defines the complete set of states a task can occupy. State
   |---|---|---|---|---|---|---|
   | Waiting for client action | `awaiting_client` | Waiting for Customer | On Hold / Awaiting Caller | Manual activity pending in inbox | Waiting on Someone Else | Suspended |
   | Waiting for third-party verification | `awaiting_verification` | Pending | On Hold / Awaiting Evidence | Suspended process | Deferred | Suspended |
-  | Escalated | `escalated` | Escalated (built-in) | Custom via priority + routing | Supervisor queue routing | Custom escalation rule | — |
-  | Cancelled | `cancelled` | Cancelled (terminal) | Canceled (terminal) | Aborted process | Cancelled | Obsolete / Exited |
 
 - **Status values use snake_case.** Consistent with the blueprint's JSON API conventions and widely used in government API contexts (GitHub, Stack Exchange, Twitter). OpenAPI places no constraint on enum value casing; code generators map to language-appropriate forms (e.g., `InProgress` in TypeScript).
 - **`cancelled` has a `reopen` transition that returns the task to `pending` with fresh routing.** Cancellation is sometimes an error, and supervisors need a way to reinstate a task without recreating it from scratch. Matches ServiceNow and Curam behavior.
