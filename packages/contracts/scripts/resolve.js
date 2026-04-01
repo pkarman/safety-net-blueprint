@@ -292,11 +292,16 @@ function resolveActionTargets(actionFileMap) {
   return { actionTargets, warnings };
 }
 
+// Behavioral YAML filename patterns — update: on arrays in these files may be accidental
+const BEHAVIORAL_YAML_PATTERNS = ['-state-machine.yaml', '-sla-types.yaml', '-rules.yaml', '-metrics.yaml'];
+
 /**
- * Apply overlay actions to files based on resolved targets
+ * Apply overlay actions to files based on resolved targets.
+ * Returns { results, warnings }.
  */
 function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) {
   const results = new Map();
+  const warnings = [];
 
   // Initialize results with original specs
   for (const { relativePath, spec } of yamlFiles) {
@@ -304,7 +309,7 @@ function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) 
   }
 
   if (!overlay.actions || !Array.isArray(overlay.actions)) {
-    return results;
+    return { results, warnings };
   }
 
   // Apply each action to its target files
@@ -316,6 +321,17 @@ function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) 
       const spec = results.get(relativePath);
       if (!spec) continue;
 
+      // Warn when update: is used with an array value on a behavioral YAML —
+      // this replaces all baseline entries. append: is usually the right choice.
+      if (action.update !== undefined && Array.isArray(action.update) &&
+          BEHAVIORAL_YAML_PATTERNS.some(p => relativePath.endsWith(p))) {
+        warnings.push(
+          `"update:" on "${action.target}" in ${relativePath} replaces all baseline entries. ` +
+          `Use "append:" to add items without removing baseline content. ` +
+          `(action: "${action.description || action.target}")`
+        );
+      }
+
       const singleOverlay = { actions: [action] };
       const { result } = applyOverlay(spec, singleOverlay, { overlayDir, silent: true });
       results.set(relativePath, result);
@@ -326,7 +342,7 @@ function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) 
     }
   }
 
-  return results;
+  return { results, warnings };
 }
 
 // =============================================================================
@@ -780,7 +796,9 @@ async function main() {
       const { actionTargets, warnings } = resolveActionTargets(actionFileMap);
       allWarnings = allWarnings.concat(warnings);
 
-      currentResults = applyOverlayWithTargets(inputFiles, overlay, actionTargets, specPath);
+      const { results: rpcResults, warnings: rpcWarnings } = applyOverlayWithTargets(inputFiles, overlay, actionTargets, specPath);
+      allWarnings = allWarnings.concat(rpcWarnings);
+      currentResults = rpcResults;
 
       const transitionCount = stateMachine.transitions?.length || 0;
       console.log(`  \u2713 Auto-generated: ${stateMachine.domain} RPC Overlay (${transitionCount} transitions)`);
@@ -845,7 +863,9 @@ async function main() {
         const { actionTargets, warnings } = resolveActionTargets(actionFileMap);
         allWarnings = allWarnings.concat(warnings);
 
-        currentResults = applyOverlayWithTargets(inputFiles, overlay, actionTargets, overlayDir);
+        const { results: overlayResults, warnings: overlayWarnings } = applyOverlayWithTargets(inputFiles, overlay, actionTargets, overlayDir);
+        allWarnings = allWarnings.concat(overlayWarnings);
+        currentResults = overlayResults;
       }
     }
   }

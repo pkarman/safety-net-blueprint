@@ -790,13 +790,53 @@ test('resolve-overlay tests', async (t) => {
       const { overlay } = rpcOverlays[0];
       const actionFileMap = analyzeTargetLocations(overlay, yamlFiles);
       const { actionTargets } = resolveActionTargets(actionFileMap);
-      const results = applyOverlayWithTargets(yamlFiles, overlay, actionTargets, dir);
+      const { results } = applyOverlayWithTargets(yamlFiles, overlay, actionTargets, dir);
 
       const resolved = results.get('test-openapi.yaml');
       assert.ok(resolved.paths['/items/{itemId}/publish'], 'Should have publish RPC path');
       assert.ok(resolved.paths['/items/{itemId}/archive'], 'Should have archive RPC path');
       assert.strictEqual(resolved.paths['/items/{itemId}/publish'].post.operationId, 'publishItem');
       assert.strictEqual(resolved.paths['/items/{itemId}/archive'].post.operationId, 'archiveItem');
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  await t.test('applyOverlayWithTargets - warns when update: used with array on behavioral YAML', () => {
+    const dir = createTmpDir();
+    try {
+      const stateMachineYaml = {
+        domain: 'test',
+        object: 'Item',
+        states: [{ id: 'draft' }, { id: 'published' }],
+        initialState: 'draft',
+        transitions: []
+      };
+      writeYaml(dir, 'test-state-machine.yaml', stateMachineYaml);
+
+      const yamlFiles = [{
+        relativePath: 'test-state-machine.yaml',
+        sourcePath: join(dir, 'test-state-machine.yaml'),
+        spec: stateMachineYaml
+      }];
+
+      const overlay = {
+        info: { title: 'Test Overlay', version: '1.0.0' },
+        actions: [{
+          target: '$.states',
+          description: 'Replace states',
+          update: [{ id: 'active' }, { id: 'closed' }]
+        }]
+      };
+
+      const actionFileMap = analyzeTargetLocations(overlay, yamlFiles);
+      const { actionTargets } = resolveActionTargets(actionFileMap);
+      const { results, warnings } = applyOverlayWithTargets(yamlFiles, overlay, actionTargets, dir);
+
+      assert.strictEqual(warnings.length, 1);
+      assert.ok(warnings[0].includes('"update:"'), 'Warning should mention update:');
+      assert.ok(warnings[0].includes('append:'), 'Warning should suggest append:');
+      assert.ok(results instanceof Map, 'results should still be a Map');
     } finally {
       rmSync(dir, { recursive: true });
     }
