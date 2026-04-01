@@ -1212,6 +1212,29 @@ test('Overlay Resolver Tests', async (t) => {
     assert.strictEqual(result.transitions.length, 2);
   });
 
+  await t.test('applyOverlay - append merges fields into an object target', () => {
+    const spec = {
+      Person: { properties: { name: { type: 'string' } } }
+    };
+    const overlay = {
+      actions: [
+        {
+          target: '$.Person.properties',
+          description: 'Add income field',
+          append: { monthlyIncome: { type: 'number' } }
+        }
+      ]
+    };
+
+    const { result } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.deepStrictEqual(result.Person.properties, {
+      name: { type: 'string' },
+      monthlyIncome: { type: 'number' }
+    });
+    assert.deepStrictEqual(spec.Person.properties, { name: { type: 'string' } }); // original unchanged
+  });
+
   await t.test('applyOverlay - skips filter actions for files without the root key', () => {
     const spec = {
       Person: { properties: { name: { type: 'string' } } }
