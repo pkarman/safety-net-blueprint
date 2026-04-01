@@ -18,7 +18,7 @@ metrics:
         "==":
           - var: action
           - claimed
-    pairBy: objectId
+    pairBy: resourceId
     targets:
       - stat: p50
         operator: <

@@ -115,6 +115,8 @@ The override affects:
 - SLA status computation (when `slaInfo` entries are evaluated for `warning` or `breached`)
 - The `clockStartedAt` and `deadline` values stored on newly created SLA entries
 
+**Simulating pause/resume scenarios:** Pause duration is computed as the difference between the `X-Mock-Now` value at resume and the `X-Mock-Now` value at pause. Both steps must use the same clock — if you pause without `X-Mock-Now` and resume with it (or vice versa), the duration will be wrong. To simulate a 3-day pause: set `X-Mock-Now` at the pause step, then set it to 3 days later at the resume step. To test breach after resuming, send a third request with `X-Mock-Now` set past the extended deadline (returned in the resume response).
+
 ## Search Query Syntax
 
 Use the `q` parameter for filtering. See [Search Patterns](../decisions/search-patterns.md) for full syntax reference.

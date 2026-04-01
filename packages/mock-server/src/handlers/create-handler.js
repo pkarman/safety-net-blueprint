@@ -76,7 +76,7 @@ export function createCreateHandler(apiMetadata, endpoint, baseUrl, stateMachine
 
       // Persist rule-driven mutations back to DB
         const diff = {};
-        const original = { ...resource };
+        const original = JSON.parse(JSON.stringify(resource));
         for (const [key, value] of Object.entries(resource)) {
           if (original[key] !== value && key !== 'id' && key !== 'createdAt' && key !== 'updatedAt') {
             diff[key] = value;
