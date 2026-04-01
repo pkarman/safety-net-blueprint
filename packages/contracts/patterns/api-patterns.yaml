@@ -369,9 +369,9 @@ schema_patterns:
       suffix: Writable
       composition:
         base: extends ResourceWritable via allOf
-        full_resource: allOf [ResourceWritable, server-managed fields]
-        create: allOf [ResourceWritable, required fields, write-only overrides]
-        update: allOf [ResourceWritable, minProperties: 1]
+        full_resource: "allOf [ResourceWritable, server-managed fields]"
+        create: "allOf [ResourceWritable, required fields, write-only overrides]"
+        update: "allOf [ResourceWritable, minProperties: 1]"
       example: |
         TaskWritable:        # client-writable fields only
           type: object
