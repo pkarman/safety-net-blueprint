@@ -115,11 +115,14 @@ export function initializeSlaInfo(resource, slaTypes, now) {
  * @param {Object} resource - The resource after transition (mutated)
  * @param {Array} slaTypes - SLA type definitions from *-sla-types.yaml
  * @param {string} now - Current datetime (ISO 8601)
+ * @param {Object} states - State definitions from the state machine (keyed by state name)
  */
-export function updateSlaInfo(resource, slaTypes, now) {
+export function updateSlaInfo(resource, slaTypes, now, states = {}) {
   if (!resource.slaInfo || resource.slaInfo.length === 0) return;
 
   const nowMs = new Date(now).getTime();
+  const currentStateConfig = states[resource.status] ?? {};
+  const clockIsStopped = currentStateConfig.slaClock === 'stopped';
 
   for (const entry of resource.slaInfo) {
     // Skip terminal states
@@ -128,7 +131,7 @@ export function updateSlaInfo(resource, slaTypes, now) {
     const slaType = slaTypes.find(t => t.id === entry.slaTypeCode);
     if (!slaType) continue;
 
-    // Evaluate completedWhen (highest priority)
+    // Evaluate completedWhen (highest priority — explicit SLA type override)
     const completedWhen = slaType.completedWhen ?? null;
     if (completedWhen !== null && evaluateCondition(completedWhen, resource)) {
       entry.status = 'completed';
@@ -136,8 +139,9 @@ export function updateSlaInfo(resource, slaTypes, now) {
       continue;
     }
 
-    // Default completedWhen: resource status = completed
-    if (!completedWhen && resource.status === 'completed') {
+    // If no custom completedWhen, defer to the state machine: any state with
+    // slaClock: stopped (e.g. completed, cancelled) terminates SLA tracking.
+    if (!completedWhen && clockIsStopped) {
       entry.status = 'completed';
       entry._pausedSince = null;
       continue;

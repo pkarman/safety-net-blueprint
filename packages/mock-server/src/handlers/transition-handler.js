@@ -83,7 +83,7 @@ export function createTransitionHandler(resourceName, stateMachine, trigger, par
 
       // Update SLA clock state based on new status
       if (slaTypes.length > 0 && updated.slaInfo?.length > 0) {
-        updateSlaInfo(updated, slaTypes, now);
+        updateSlaInfo(updated, slaTypes, now, stateMachine.states || {});
       }
 
       // Process pending rule evaluations
