@@ -292,11 +292,16 @@ function resolveActionTargets(actionFileMap) {
   return { actionTargets, warnings };
 }
 
+// Behavioral YAML filename patterns — update: on arrays in these files may be accidental
+const BEHAVIORAL_YAML_PATTERNS = ['-state-machine.yaml', '-sla-types.yaml', '-rules.yaml', '-metrics.yaml'];
+
 /**
- * Apply overlay actions to files based on resolved targets
+ * Apply overlay actions to files based on resolved targets.
+ * Returns { results, warnings }.
  */
 function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) {
   const results = new Map();
+  const warnings = [];
 
   // Initialize results with original specs
   for (const { relativePath, spec } of yamlFiles) {
@@ -304,7 +309,7 @@ function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) 
   }
 
   if (!overlay.actions || !Array.isArray(overlay.actions)) {
-    return results;
+    return { results, warnings };
   }
 
   // Apply each action to its target files
@@ -316,6 +321,17 @@ function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) 
       const spec = results.get(relativePath);
       if (!spec) continue;
 
+      // Warn when update: is used with an array value on a behavioral YAML —
+      // this replaces all baseline entries. append: is usually the right choice.
+      if (action.update !== undefined && Array.isArray(action.update) &&
+          BEHAVIORAL_YAML_PATTERNS.some(p => relativePath.endsWith(p))) {
+        warnings.push(
+          `"update:" on "${action.target}" in ${relativePath} replaces all baseline entries. ` +
+          `Use "append:" to add items without removing baseline content. ` +
+          `(action: "${action.description || action.target}")`
+        );
+      }
+
       const singleOverlay = { actions: [action] };
       const { result } = applyOverlay(spec, singleOverlay, { overlayDir, silent: true });
       results.set(relativePath, result);
@@ -326,7 +342,7 @@ function applyOverlayWithTargets(yamlFiles, overlay, actionTargets, overlayDir) 
     }
   }
 
-  return results;
+  return { results, warnings };
 }
 
 // =============================================================================
@@ -541,6 +557,124 @@ function generateRpcOverlays(specPath, yamlFiles) {
 }
 
 // =============================================================================
+// x-enum-source Injection
+// =============================================================================
+
+/**
+ * Build an index of enum values from behavioral YAML files in currentResults.
+ * Reads post-overlay versions so state customizations are included.
+ * Returns { 'slaTypes': ['id1', ...], 'states': ['id1', ...] }
+ */
+function buildEnumSourceIndex(currentResults) {
+  const index = {};
+
+  for (const [relativePath, spec] of currentResults) {
+    if (!spec || typeof spec !== 'object') continue;
+
+    if (relativePath.endsWith('-sla-types.yaml') && Array.isArray(spec.slaTypes)) {
+      index['slaTypes'] = spec.slaTypes.map(t => t.id).filter(Boolean);
+    }
+
+    if (relativePath.endsWith('-state-machine.yaml') && Array.isArray(spec.states)) {
+      index['states'] = spec.states.map(s => s.id).filter(Boolean);
+    }
+  }
+
+  return index;
+}
+
+/**
+ * Recursively find all x-enum-source annotations in a spec object.
+ * Returns [{ path: 'Foo.properties.bar', source: 'slaTypes[].id' }, ...]
+ */
+function findEnumSources(node, path = '') {
+  const findings = [];
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return findings;
+
+  if (node['x-enum-source']) {
+    findings.push({ path, source: node['x-enum-source'] });
+  }
+
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'x-enum-source') continue;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const childPath = path ? `${path}.${key}` : key;
+      findings.push(...findEnumSources(value, childPath));
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Parse x-enum-source syntax: "slaTypes[].id" → { collection: 'slaTypes', field: 'id' }
+ */
+function parseEnumSource(source) {
+  const match = source.match(/^(\w+)\[\]\.(\w+)$/);
+  if (!match) return null;
+  return { collection: match[1], field: match[2] };
+}
+
+/**
+ * Scan currentResults for x-enum-source annotations, inject enum values from
+ * behavioral YAMLs, and strip the annotation from the resolved output.
+ * Reads behavioral YAMLs from currentResults (post-overlay) so state
+ * customizations are reflected.
+ * Returns warnings for unresolvable sources.
+ */
+function applyEnumSourceInjections(currentResults) {
+  const warnings = [];
+  const enumIndex = buildEnumSourceIndex(currentResults);
+
+  if (Object.keys(enumIndex).length === 0) return warnings;
+
+  for (const [relativePath, spec] of currentResults) {
+    if (!spec || typeof spec !== 'object') continue;
+
+    const findings = findEnumSources(spec);
+    if (findings.length === 0) continue;
+
+    const actions = [];
+
+    for (const { path, source } of findings) {
+      const parsed = parseEnumSource(source);
+      if (!parsed) {
+        warnings.push(`x-enum-source: invalid syntax "${source}" at ${relativePath}#${path}`);
+        continue;
+      }
+
+      const enumValues = enumIndex[parsed.collection];
+      if (!enumValues || enumValues.length === 0) {
+        warnings.push(`x-enum-source: no values found for collection "${parsed.collection}" (${relativePath}#${path})`);
+        continue;
+      }
+
+      // Merge the enum array into the target field object
+      actions.push({
+        target: `$.${path}`,
+        description: `Inject ${source} enum into ${path}`,
+        update: { enum: enumValues }
+      });
+
+      // Strip the annotation from resolved output
+      actions.push({
+        target: `$.${path}.x-enum-source`,
+        remove: true
+      });
+    }
+
+    if (actions.length > 0) {
+      const overlay = { overlay: '1.0.0', info: { title: 'Enum Source Injection', version: '1.0.0' }, actions };
+      const { result } = applyOverlay(spec, overlay, { silent: true });
+      currentResults.set(relativePath, result);
+      console.log(`  \u2713 Auto-generated: enum injection (${findings.length} field(s) in ${relativePath})`);
+    }
+  }
+
+  return warnings;
+}
+
+// =============================================================================
 // Output
 // =============================================================================
 
@@ -662,7 +796,9 @@ async function main() {
       const { actionTargets, warnings } = resolveActionTargets(actionFileMap);
       allWarnings = allWarnings.concat(warnings);
 
-      currentResults = applyOverlayWithTargets(inputFiles, overlay, actionTargets, specPath);
+      const { results: rpcResults, warnings: rpcWarnings } = applyOverlayWithTargets(inputFiles, overlay, actionTargets, specPath);
+      allWarnings = allWarnings.concat(rpcWarnings);
+      currentResults = rpcResults;
 
       const transitionCount = stateMachine.transitions?.length || 0;
       console.log(`  \u2713 Auto-generated: ${stateMachine.domain} RPC Overlay (${transitionCount} transitions)`);
@@ -727,7 +863,9 @@ async function main() {
         const { actionTargets, warnings } = resolveActionTargets(actionFileMap);
         allWarnings = allWarnings.concat(warnings);
 
-        currentResults = applyOverlayWithTargets(inputFiles, overlay, actionTargets, overlayDir);
+        const { results: overlayResults, warnings: overlayWarnings } = applyOverlayWithTargets(inputFiles, overlay, actionTargets, overlayDir);
+        allWarnings = allWarnings.concat(overlayWarnings);
+        currentResults = overlayResults;
       }
     }
   }
@@ -738,6 +876,12 @@ async function main() {
     for (const { relativePath, spec } of yamlFiles) {
       currentResults.set(relativePath, JSON.parse(JSON.stringify(spec)));
     }
+  }
+
+  // Inject x-enum-source enums (after overlays so state customizations are included)
+  {
+    const enumWarnings = applyEnumSourceInjections(currentResults);
+    allWarnings = allWarnings.concat(enumWarnings);
   }
 
   // Resolve x-relationship annotations (after overlays, before env filtering)
@@ -884,7 +1028,11 @@ export {
   applyOverlayWithTargets,
   detectComponentPrefix,
   rewriteOverlayRefs,
-  generateRpcOverlays
+  generateRpcOverlays,
+  buildEnumSourceIndex,
+  findEnumSources,
+  parseEnumSource,
+  applyEnumSourceInjections
 };
 
 // Run main when executed directly
