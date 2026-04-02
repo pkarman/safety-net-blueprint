@@ -34,6 +34,8 @@ base spec directory (--spec)         overlay directory (--overlay)
                 *-openapi-examples.yaml  (transformed)
                 *-state-machine.yaml  (copied)
                 *-rules.yaml          (copied)
+                *-sla-types.yaml      (copied, no overlay processing yet — see #174)
+                *-metrics.yaml        (copied, no overlay processing yet — see #174)
 ```
 
 ## Pipeline Stages

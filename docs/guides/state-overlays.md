@@ -490,6 +490,19 @@ If validation fails after applying an overlay:
 2. Ensure enum values are valid strings
 3. Verify new properties have required fields (type, description)
 
+## Behavioral Artifacts (Overlay Support Planned)
+
+The following behavioral YAML artifacts exist alongside OpenAPI specs but are not yet overlayable — they are copied to the output directory unchanged. Overlay support is tracked in issue #174.
+
+| Artifact | File pattern | Planned overlay use |
+|----------|-------------|---------------------|
+| State machine | `*-state-machine.yaml` | Add/modify transitions, guards, effects |
+| Rules | `*-rules.yaml` | Replace or extend assignment/priority rules |
+| SLA types | `*-sla-types.yaml` | Override deadlines, `pauseWhen` conditions, `autoAssignWhen` logic |
+| Metrics | `*-metrics.yaml` | Add state-specific metrics or override targets |
+
+States that need different SLA deadlines or pause conditions will be able to supply their own `*-sla-types.yaml` via overlay once #174 lands.
+
 ## Reference
 
 - [State Customization Strategy](../decisions/state-customization.md)

@@ -15,8 +15,11 @@ safety-net-blueprint/
 ├── packages/
 │   ├── contracts/                  # Behavioral contracts, OpenAPI specs, validation, overlays
 │   │   ├── package.json
-│   │   ├── *-openapi.yaml          # Main API specs (persons-openapi.yaml, etc.)
+│   │   ├── *-openapi.yaml          # Main API specs (persons-openapi.yaml, workflow-openapi.yaml, etc.)
 │   │   ├── *-state-machine.yaml    # State machine definitions (transitions, guards, effects)
+│   │   ├── *-rules.yaml            # Assignment and priority rule sets (JSON Logic)
+│   │   ├── *-sla-types.yaml        # SLA type definitions (deadlines, pauseWhen, autoAssignWhen)
+│   │   ├── *-metrics.yaml          # Metrics definitions (aggregates, sources, JSON Logic filters)
 │   │   ├── components/             # Shared schemas and parameters
 │   │   │   ├── common.yaml         # Reusable schemas (Address, Name)
 │   │   │   ├── parameters.yaml     # Query params (limit, offset)
@@ -100,6 +103,10 @@ npm install -w @codeforamerica/safety-net-blueprint-contracts -w @codeforamerica
 | Type | Convention | Example |
 |------|------------|---------|
 | API specs | `{domain}-openapi.yaml` | `case-workers-openapi.yaml` |
+| State machine | `{domain}-state-machine.yaml` | `workflow-state-machine.yaml` |
+| Rules | `{domain}-rules.yaml` | `workflow-rules.yaml` |
+| SLA types | `{domain}-sla-types.yaml` | `workflow-sla-types.yaml` |
+| Metrics | `{domain}-metrics.yaml` | `workflow-metrics.yaml` |
 | Component schemas | kebab-case in `components/` | `components/common.yaml` |
 | Overlay files | `overlays/{state}/modifications.yaml` | `overlays/california/modifications.yaml` |
 | Scripts | kebab-case | `generate-clients-typescript.js` |

@@ -1,141 +1,90 @@
 # Workflow Domain
 
-> **Status:** Task, Queue, and Events APIs implemented (alpha). State machine engine supports transitions, guards, `set`, `create`, `evaluate-rules`, and `event` effects with conditional execution via `when` clauses. Rule evaluation engine handles assignment and priority rules. Additional entities and behavioral artifacts (metrics) are future work. The [workflow prototype](../../prototypes/workflow-prototype.md) designs the full set of patterns.
+The Workflow domain manages the lifecycle of work items (tasks), their routing to queues, SLA tracking against regulatory deadlines, and operational metrics. It is a **behavior-shaped** domain — the task lifecycle is governed by a state machine with guards, effects, and routing rules rather than ad-hoc CRUD logic.
 
 See [Domain Design Overview](../domain-design.md) for context and [Contract-Driven Architecture](../contract-driven-architecture.md) for the contract approach.
 
-## Overview
-
-The Workflow domain manages work items, tasks, SLA tracking, and task routing. It is a **behavior-shaped** domain — the task lifecycle involves state transitions, guards, effects, routing rules, and SLA enforcement.
-
-## Current Implementation
+## Domain Model
 
 ### Task
 
-A discrete unit of work with a lifecycle. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
-
-Based on: [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html), [Camunda Tasklist](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/), ServiceNow Task, [BPMN](https://www.bpmn.org/) task states.
-
-**Key design decisions:**
-- Explicit status over derived state — all four systems model task state as an explicit field, not derived from timestamps.
-- Single-owner assignment — follows WS-HumanTask's `actualOwner` pattern. Group/queue assignment is future work.
-- Minimal status enum — the base set (`pending`, `in_progress`, `completed`) maps to the universal core of every task system. States extend via overlay.
-
-### Domain Events
-
-Immutable records emitted whenever a state machine transition fires or an object is created. The `event` effect type in the state machine YAML declares what action to record and what transition-specific data to include. All domains write to the same events collection — `domain`, `resource`, and `action` identify the event type. Read-only API (no POST/PATCH/DELETE). [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml), [Schema: `components/events.yaml`](../../../packages/contracts/components/events.yaml)
-
-| Concept | Industry Source |
-|---------|----------------|
-| Task event history | [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html): Task Event History |
-| Operation log | Camunda: [User Operation Log](https://docs.camunda.org/manual/latest/user-guide/process-engine/history/user-operation-log/) |
-| Audit trail | [Flowable](https://documentation.flowable.com/latest/reactmodel/bpmn/reference/audit): Audit Trail |
+A task is the atomic unit of caseworker activity — reviewing an application, verifying a document, completing a redetermination. It represents a single, ownable piece of work with a clear beginning and end. Tasks are assigned to a single owner (caseworker, supervisor, or automated process) at a time and have an explicit lifecycle governed by the [state machine](#state-machine). They carry `slaInfo` entries that track deadline status against regulatory requirements, and link to a `Queue` that controls routing and visibility. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
 
 ### Queue
 
-Work queues that tasks are routed into based on program type and other criteria. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
+Queues are the organizing structure for caseworker workloads. A queue represents a logical grouping of tasks — typically by program (SNAP, Medicaid), team, or skill — and determines which workers can see and claim which tasks. Tasks enter a queue automatically when created or released, based on assignment rules. Supervisors manage queues to balance workload across their teams. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
 
-| Concept | Industry Source |
-|---------|----------------|
-| Work queue / worklist | [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html): Worklist |
-| Assignment group | ServiceNow: Assignment Group |
-| Candidate group | Camunda: [Candidate Groups](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/) |
+### Domain Events
 
-### Rules
-
-Assignment and priority rules evaluate automatically when tasks are created and when they re-enter a queue (e.g., after release). Rules are defined in [`workflow-rules.yaml`](../../../packages/contracts/workflow-rules.yaml) using [JSON Logic](https://jsonlogic.com/) conditions.
-
-**Rule sets:**
-
-| Rule Set | Trigger | Purpose |
-|----------|---------|---------|
-| `assignment` | `onCreate`, `release` | Route tasks to the correct queue based on program type |
-| `priority` | `onCreate`, `release` | Set task priority based on expedited flag or other criteria |
-
-**How rules connect to the state machine:**
-
-Rules are invoked via `evaluate-rules` effects in the state machine YAML. The `onCreate` block evaluates both assignment and priority rules when a task is first created. The `release` transition re-evaluates them when a task returns to `pending`.
-
-```yaml
-# In workflow-state-machine.yaml
-onCreate:
-  effects:
-    - type: evaluate-rules
-      ruleType: assignment
-    - type: evaluate-rules
-      ruleType: priority
-```
-
-**Evaluation model:** Each rule set uses `first-match-wins` — rules are evaluated in `order` and the first matching rule's action is executed. The baseline rules in `workflow-rules.yaml` are a starting point; states replace them with their own logic. See [Customization](#customization) below.
+Every state machine transition and lifecycle hook emits an immutable domain event. Events serve two purposes: they are the audit trail (a complete history of what happened to every task and when) and the integration surface for cross-domain communication (other domains subscribe to workflow events rather than polling task state). For example, when a task transitions to `completed`, an event is emitted that could trigger downstream processes like application status updates or case record creation. All domains share the same events collection; `domain`, `resource`, and `action` identify the event type. Read-only API. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
 
 ### State Machine
 
-The task lifecycle defines 12 transitions across 9 states. 4 transitions are implemented today (`create`, `claim`, `complete`, `release`) with guards and `set`/`create`/`evaluate-rules`/`event` effects working in the mock server. See [`workflow-state-machine.yaml`](../../../packages/contracts/workflow-state-machine.yaml). The remaining transitions use the same effect types and patterns.
+The task lifecycle is governed by a declarative state machine (`workflow-state-machine.yaml`) rather than ad-hoc endpoint logic. Tasks move through states like `pending` → `in_progress` → `awaiting_client` → `in_progress` → `completed`, with each transition triggered by an explicit action (claim, release, complete, await-client, etc.). Each transition trigger becomes an RPC endpoint (e.g., `POST /workflow/tasks/{id}/claim`). Transitions declare guards (preconditions that must be true for the transition to be allowed) and effects (side effects that execute when the transition fires, such as updating fields or emitting events) — adding a new transition is a YAML table row, not new endpoint code. [Spec: `workflow-state-machine.yaml`](../../../packages/contracts/workflow-state-machine.yaml)
 
-**Implemented:** `pending`, `in_progress`, `completed` (3 states, 4 transitions including `onCreate`)
+For the full state transition table, guard definitions, and effect specifications see [workflow-state-machine.yaml](../../../packages/contracts/workflow-state-machine.yaml) and [Task Lifecycle States](workflow-design-rationale.md#task-lifecycle-states) in the design reference.
 
-**Planned:** `awaiting_client`, `awaiting_verification`, `awaiting_review`, `returned_to_queue`, `cancelled`, `escalated` (6 additional states, 8 additional transitions)
+### Rules
 
-Key behavioral patterns:
-- Each transition trigger becomes an RPC API endpoint (e.g., `claim` -> `POST /workflow/tasks/:id/claim`)
-- Guards enforce preconditions (e.g., task is unassigned, caller has required skills)
-- Effects include: `set` (update fields), `create` (create related records), `evaluate-rules` (routing/priority), `event` (domain events), `lookup` (SLA config, planned)
-- Conditional effects: `when` clause (JSON Logic) on any effect — fires only when the condition matches the request or resource context
-- SLA clock pauses on `awaiting_client` and `awaiting_verification` states (planned)
+Assignment and priority rules express routing logic that doesn't belong in the state machine. When a task is created or returns to `pending` (e.g., after a release or escalation), rules determine which queue it should go to and what priority it should have. Keeping this logic in a separate rules file means states can replace their routing and priority logic entirely without touching the state machine.
 
-## Customization
+| Rule Set | Purpose |
+|----------|---------|
+| `assignment` | Route tasks to the correct queue based on program type and other criteria |
+| `priority` | Set task priority (e.g., `expedited` when `isExpedited == true`) |
 
-The baseline rules are a starting point — states replace them with their own program-specific routing and priority logic. See the [State Setup Guide](../../guides/state-setup-guide.md#customizing-behavioral-artifacts) for how to customize rules and other behavioral artifacts.
+Rules use JSON Logic conditions and `first-match-wins` evaluation. The baseline rules are illustrative — states replace them with their own program-specific routing logic. See [Rules Engine](workflow-design-rationale.md#rules-engine) in the design reference.
 
-## Future Work
+### SLA Types
 
-### Additional Task Fields
+Federal regulations impose strict processing deadlines on benefits applications — 7 days for expedited SNAP, 30 days for standard SNAP, 45 days for most Medicaid, 90 days for disability-related Medicaid. SLA types define these deadlines and the conditions under which the clock pauses (e.g., while waiting on the client) and resumes. Each task carries a `slaInfo` array with one entry per applicable SLA type, tracking deadline status in real time. SLA types are auto-assigned at task creation based on the task's fields and updated automatically on every state transition.
 
-Future fields include SLA tracking, subtasks, and dependencies. These are designed in the [workflow prototype](../../prototypes/workflow-prototype.md) and based on [WS-HumanTask](https://docs.oasis-open.org/bpel4people/ws-humantask-1.1-spec-cs-01.html), [WfMC](https://www.aiai.ed.ac.uk/project/wfmc/ARCHIVE/DOCS/refmodel/rmv1-16.html), [Camunda](https://docs.camunda.io/docs/apis-tools/tasklist-api-rest/controllers/tasklist-api-rest-task-controller/), ServiceNow, and [BPMN](https://www.bpmn.org/) patterns.
-
-### Additional Entities
-
-| Entity | Purpose | Industry Source |
-|--------|---------|----------------|
-| **TaskType** | Task categorization config | ServiceNow: Category; Camunda: Task Definition Key; WS-HumanTask: Task Definition |
-| **SLAType** | SLA deadline config by program and task type | ServiceNow: [SLA Definition](https://www.emergys.com/blog/service-level-agreement-sla-for-servicenow/); WS-HumanTask: Deadline/Escalation |
-| **VerificationTask** | Verify data against external sources | Benefits-domain-specific — no equivalent in generic workflow standards |
-| **VerificationSource** | External verification API registry (IRS, ADP, state databases) | Benefits-domain-specific integration pattern |
+Baseline SLA types: `snap_expedited` (7 days), `snap_standard` (30 days), `medicaid_standard` (45 days), `medicaid_disability` (90 days). Defined in [`workflow-sla-types.yaml`](../../../packages/contracts/workflow-sla-types.yaml). See [SLA Types and Clock Management](workflow-design-rationale.md#sla-types-and-clock-management) for design rationale.
 
 ### Metrics
 
-Four categories of operational metrics, with the prototype proving one metric from each source type:
+Operational metrics give supervisors visibility into queue health, team performance, and compliance risk. Metrics are computed on demand from live task and event data — no separate reporting store. Each metric is defined declaratively in [`workflow-metrics.yaml`](../../../packages/contracts/workflow-metrics.yaml) using a `source + aggregate + JSON Logic filter` model: specify what data to query, how to aggregate it, and optionally what performance target to evaluate against. Results are available at `GET /workflow/metrics` with support for time windowing and dimensional breakdown by queue or program. [Spec: `workflow-openapi.yaml`](../../../packages/contracts/workflow-openapi.yaml)
 
-| Category | Examples | Source Types |
-|----------|----------|-------------|
-| Task metrics | Time to claim, completion time, queue depth | Duration, state count |
-| SLA metrics | Breach rate, at-risk count | Transition count, state count |
-| Assignment metrics | Release rate, reassignment rate | Transition count |
-| Verification metrics | Success rate, latency, match rate | Transition count, duration |
+Baseline metrics: task time to claim (duration), tasks in queue (count), release rate (ratio), SLA breach rate (ratio), SLA warning rate (ratio). See [Metrics](workflow-design-rationale.md#metrics) for design rationale.
+
+## Customization
+
+The baseline contracts are a starting point. States customize via overlays:
+
+- **State machine**: add transitions, extend guards, add effects to existing transitions
+- **Rules**: replace `workflow-rules.yaml` entirely with state-specific assignment and priority logic
+- **SLA types**: replace or extend `workflow-sla-types.yaml` with state-specific deadlines and pause conditions (overlay support: issue #174)
+- **Metrics**: replace or extend `workflow-metrics.yaml` with state-specific metrics and targets (overlay support: issue #174)
+
+See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mechanics.
+
+## Future Work
+
+| Capability | Notes |
+|------------|-------|
+| Polymorphic subject association | Tasks should link to applications, cases, and other entities via `subjectId`/`subjectType` rather than entity-specific FK fields. See issue #177. |
+| Cross-domain event wiring | Application submitted → review task auto-created. Events infrastructure is in place; wiring that maps domain events to task creation is not yet implemented. |
+| Role-based access control | Guards reference `$caller.role` and `$caller.type`; enforcement is at the service layer until RBAC is implemented. |
+| Overlay support for behavioral YAMLs | States can't yet overlay `*-sla-types.yaml`, `*-metrics.yaml`, or `*-state-machine.yaml`. See issue #174. |
+| SLA breach transition | `slaInfo.*.status` becomes `breached` via the SLA engine; no timer-triggered state machine transition fires at the breach moment. See [Known gaps](workflow-design-rationale.md#known-gaps-and-future-considerations). |
+| Skill-based assignment | Rules support it; no built-in assignment actions yet for round-robin or least-loaded routing. |
 
 ## Contract Artifacts
 
-| Artifact | Status | Notes |
-|----------|--------|-------|
-| OpenAPI spec | Alpha | `workflow-openapi.yaml` — Task CRUD, Queue CRUD, Events (read-only). Additional entities in future issues |
-| State machine YAML | Alpha | `workflow-state-machine.yaml` — 4 transitions with guards, `set`/`create`/`evaluate-rules`/`event` effects, `when` conditional execution. 8 more planned. See [workflow prototype](../../prototypes/workflow-prototype.md) |
-| Rules YAML | Alpha | `workflow-rules.yaml` — Assignment and priority rule sets with JSON Logic conditions. See [Customizing Rules](#customizing-rules) |
-| Metrics YAML | Draft | 4 metric categories; designed in prototype, not yet implemented |
-
-## Key Design Questions
-
-- **Verification workflow** — Should VerificationTask be a separate state machine or nested states within the main task lifecycle?
-- **Cross-domain rule context** — How do rules reference `application.*` or `case.*` data? Requires context binding beyond `task.*`.
-- **Batch operations** — How should bulk reassignment work? A `bulk-reassign` RPC trigger, or a batch REST endpoint?
-- **Skill matching strategies** — How do `round_robin`, `least_loaded`, and `skill_match` assignment actions work as rule actions?
-- **Notification effects** — What triggers notifications beyond escalation? SLA warnings? Assignment changes?
+| Artifact | File |
+|----------|------|
+| OpenAPI spec | `workflow-openapi.yaml` — Tasks, Queues, Events, Metrics |
+| State machine | `workflow-state-machine.yaml` — 9 states, 12 transitions, guards, effects |
+| Rules | `workflow-rules.yaml` — Assignment and priority rule sets |
+| SLA types | `workflow-sla-types.yaml` — 4 baseline SLA types |
+| Metrics | `workflow-metrics.yaml` — 5 baseline metrics |
 
 ## Related Documents
 
 | Document | Description |
 |----------|-------------|
-| [Workflow Design Reference](workflow-design-reference.md) | Feature-by-feature reference: vendor comparisons, design decisions, customization points |
-| [Workflow Prototype](../../prototypes/workflow-prototype.md) | Full design — 9 states, 12 transitions, rules, metrics |
+| [Workflow Design Reference](workflow-design-rationale.md) | Feature-by-feature reference: vendor comparisons, design decisions, customization points |
+| [Workflow Prototype](../../prototypes/workflow-prototype.md) | Full design spec — states, transitions, rules, metrics |
 | [Domain Design](../domain-design.md) | Workflow section in the domain overview |
 | [Case Management](case-management.md) | Staff, teams, offices — closely related domain |
 | [Scheduling](scheduling.md) | Appointments may trigger workflow tasks |

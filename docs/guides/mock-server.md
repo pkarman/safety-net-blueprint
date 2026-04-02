@@ -4,7 +4,7 @@
 
 Development mock server that serves REST APIs from OpenAPI specs and will interpret behavioral contracts (state machines, rules, metrics) to serve RPC APIs.
 
-> **Note:** REST API generation (CRUD endpoints from OpenAPI specs) and the core behavioral engine (state machine transitions, guards, `set` and `create` effects) work today. Additional behavioral capabilities — rule evaluation, metrics tracking, `lookup`/`event` effects — are being built as part of the [steel thread prototypes](../prototypes/workflow-prototype.md).
+> **Note:** REST API generation (CRUD endpoints from OpenAPI specs) and the core behavioral engine (state machine transitions, guards, `set`, `create`, `evaluate-rules`, and `event` effects) work today. SLA clock tracking and metrics computation are also implemented. Additional behavioral capabilities — cross-domain event wiring, role-based access control enforcement — are planned.
 
 ## Quick Start
 
@@ -40,12 +40,10 @@ For behavior-shaped domains (workflow, application review), the mock server also
 3. Evaluate guards (null checks, caller identity)
 4. Execute `set` effects (update fields on the resource)
 5. Execute `create` effects (write records to other collections, e.g., audit events)
-
-**Planned:**
-6. `lookup` effects (retrieve config from other entities)
-7. `evaluate-rules` effects (invoke decision rules for routing and priority)
-8. `event` effects (emit domain events)
-9. Track metrics linked to states and transitions
+6. Execute `evaluate-rules` effects (invoke decision rules for routing and priority)
+7. Execute `event` effects (emit domain events)
+8. Compute SLA tracking — initialize `slaInfo` at task creation, update status on every transition using `pauseWhen`/`resumeWhen` conditions from `*-sla-types.yaml`
+9. Serve `GET /metrics` and `GET /metrics/{metricId}` — compute count, ratio, and duration aggregates from live data
 
 Adding a transition is a table row, not endpoint code.
 
@@ -73,6 +71,51 @@ For behavior-shaped domains, RPC endpoints are auto-generated from state machine
 | POST | `/workflow/tasks/:id/complete` | Trigger a state transition with effects |
 
 A 409 response means the transition is invalid from the current state or a guard condition failed.
+
+## Metrics Endpoints
+
+The mock server computes metrics on-the-fly from live data. Metrics are defined in `*-metrics.yaml` files.
+
+```bash
+# List all metrics
+curl "http://localhost:1080/workflow/metrics"
+
+# Get a specific metric
+curl "http://localhost:1080/workflow/metrics/task_time_to_claim"
+
+# Filter and group
+curl "http://localhost:1080/workflow/metrics?groupBy=queueId"
+```
+
+### Query Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `q` | Filter by metric name |
+| `groupBy` | Break down metric values by a field (e.g., `queueId`, `program`) |
+| `from` | Start of time window (ISO datetime) |
+| `to` | End of time window (ISO datetime) |
+| `queueId` | Filter source data to a specific queue |
+| `program` | Filter source data to a specific program |
+
+When `groupBy` is provided, the response includes a `breakdown` object mapping group values to per-group metric values.
+
+## Clock Override (X-Mock-Now)
+
+To simulate SLA behavior at a specific point in time, pass the `X-Mock-Now` header with an ISO datetime value. This overrides the server clock for that request — useful for testing SLA warning and breach scenarios without waiting.
+
+```bash
+# Simulate a request made 25 days after a task was created
+curl -X POST http://localhost:1080/workflow/tasks/task-001/complete \
+  -H "X-Caller-Id: worker-001" \
+  -H "X-Mock-Now: 2025-03-15T10:00:00Z"
+```
+
+The override affects:
+- SLA status computation (when `slaInfo` entries are evaluated for `warning` or `breached`)
+- The `clockStartedAt` and `deadline` values stored on newly created SLA entries
+
+**Simulating pause/resume scenarios:** Pause duration is computed as the difference between the `X-Mock-Now` value at resume and the `X-Mock-Now` value at pause. Both steps must use the same clock — if you pause without `X-Mock-Now` and resume with it (or vice versa), the duration will be wrong. To simulate a 3-day pause: set `X-Mock-Now` at the pause step, then set it to 3 days later at the resume step. To test breach after resuming, send a third request with `X-Mock-Now` set past the extended deadline (returned in the resume response).
 
 ## Search Query Syntax
 
