@@ -6,11 +6,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import {
+  parsePath,
   resolvePath,
   setAtPath,
   removeAtPath,
   renameAtPath,
   replaceAtPath,
+  appendAtPath,
   checkPathExists,
   rootExists,
   applyOverlay
@@ -845,6 +847,379 @@ test('Overlay Resolver Tests', async (t) => {
     assert.ok(matchingFiles.includes('components/person.yaml'));
     assert.ok(matchingFiles.includes('components/application.yaml'));
     assert.ok(matchingFiles.includes('components/common.yaml'));
+  });
+
+  // ==========================================================================
+  // parsePath tests
+  // ==========================================================================
+
+  await t.test('parsePath - parses simple dot-notation path', () => {
+    const tokens = parsePath('$.foo.bar.baz');
+    assert.deepStrictEqual(tokens, [
+      { type: 'key', value: 'foo' },
+      { type: 'key', value: 'bar' },
+      { type: 'key', value: 'baz' }
+    ]);
+  });
+
+  await t.test('parsePath - parses filter expression with single-quoted value', () => {
+    const tokens = parsePath("$.slaTypes[?(@.id == 'snap_expedited')].durationDays");
+    assert.deepStrictEqual(tokens, [
+      { type: 'key', value: 'slaTypes' },
+      { type: 'filter', field: 'id', value: 'snap_expedited' },
+      { type: 'key', value: 'durationDays' }
+    ]);
+  });
+
+  await t.test('parsePath - parses filter expression with numeric value', () => {
+    const tokens = parsePath('$.items[?(@.order == 1)].action');
+    assert.deepStrictEqual(tokens, [
+      { type: 'key', value: 'items' },
+      { type: 'filter', field: 'order', value: 1 },
+      { type: 'key', value: 'action' }
+    ]);
+  });
+
+  await t.test('parsePath - parses filter-only path (no trailing property)', () => {
+    const tokens = parsePath("$.metrics[?(@.id == 'release_rate')]");
+    assert.deepStrictEqual(tokens, [
+      { type: 'key', value: 'metrics' },
+      { type: 'filter', field: 'id', value: 'release_rate' }
+    ]);
+  });
+
+  // ==========================================================================
+  // resolvePath with filter expressions
+  // ==========================================================================
+
+  await t.test('resolvePath - resolves through filter expression', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 },
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    assert.strictEqual(resolvePath(obj, "$.slaTypes[?(@.id == 'snap_expedited')].durationDays"), 7);
+  });
+
+  await t.test('resolvePath - returns undefined when filter finds no match', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 }
+      ]
+    };
+    assert.strictEqual(resolvePath(obj, "$.slaTypes[?(@.id == 'snap_expedited')].durationDays"), undefined);
+  });
+
+  // ==========================================================================
+  // setAtPath with filter expressions
+  // ==========================================================================
+
+  await t.test('setAtPath - sets a property on a filter-matched item', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 },
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    setAtPath(obj, "$.slaTypes[?(@.id == 'snap_expedited')].durationDays", 10);
+    assert.strictEqual(obj.slaTypes[1].durationDays, 10);
+    assert.strictEqual(obj.slaTypes[0].durationDays, 30); // unchanged
+  });
+
+  await t.test('setAtPath - does not modify other items when filter matches one', () => {
+    const obj = {
+      transitions: [
+        { trigger: 'claim', from: 'pending', to: 'in_progress' },
+        { trigger: 'complete', from: 'in_progress', to: 'completed' }
+      ]
+    };
+    setAtPath(obj, "$.transitions[?(@.trigger == 'claim')].from", 'assigned');
+    assert.strictEqual(obj.transitions[0].from, 'assigned');
+    assert.strictEqual(obj.transitions[1].from, 'in_progress'); // unchanged
+  });
+
+  // ==========================================================================
+  // removeAtPath with filter expressions
+  // ==========================================================================
+
+  await t.test('removeAtPath - removes matching items from array', () => {
+    const obj = {
+      metrics: [
+        { id: 'time_to_claim', label: 'Time to Claim' },
+        { id: 'release_rate', label: 'Release Rate' },
+        { id: 'completion_time', label: 'Completion Time' }
+      ]
+    };
+    removeAtPath(obj, "$.metrics[?(@.id == 'release_rate')]");
+    assert.strictEqual(obj.metrics.length, 2);
+    assert.ok(obj.metrics.every(m => m.id !== 'release_rate'));
+    assert.ok(obj.metrics.some(m => m.id === 'time_to_claim'));
+    assert.ok(obj.metrics.some(m => m.id === 'completion_time'));
+  });
+
+  await t.test('removeAtPath - handles filter that matches nothing gracefully', () => {
+    const obj = {
+      metrics: [
+        { id: 'time_to_claim', label: 'Time to Claim' }
+      ]
+    };
+    removeAtPath(obj, "$.metrics[?(@.id == 'nonexistent')]");
+    assert.strictEqual(obj.metrics.length, 1); // unchanged
+  });
+
+  // ==========================================================================
+  // appendAtPath tests
+  // ==========================================================================
+
+  await t.test('appendAtPath - appends a single item to an array', () => {
+    const obj = {
+      transitions: [
+        { trigger: 'claim', from: 'pending', to: 'in_progress' }
+      ]
+    };
+    appendAtPath(obj, '$.transitions', { trigger: 'complete', from: 'in_progress', to: 'completed' });
+    assert.strictEqual(obj.transitions.length, 2);
+    assert.strictEqual(obj.transitions[1].trigger, 'complete');
+  });
+
+  await t.test('appendAtPath - appends multiple items when given an array', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 }
+      ]
+    };
+    appendAtPath(obj, '$.slaTypes', [
+      { id: 'tanf_standard', durationDays: 45 },
+      { id: 'medicaid_standard', durationDays: 60 }
+    ]);
+    assert.strictEqual(obj.slaTypes.length, 3);
+    assert.strictEqual(obj.slaTypes[1].id, 'tanf_standard');
+    assert.strictEqual(obj.slaTypes[2].id, 'medicaid_standard');
+  });
+
+  await t.test('appendAtPath - preserves existing items', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 },
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    appendAtPath(obj, '$.slaTypes', { id: 'tanf_standard', durationDays: 45 });
+    assert.strictEqual(obj.slaTypes.length, 3);
+    assert.strictEqual(obj.slaTypes[0].id, 'snap_standard');
+    assert.strictEqual(obj.slaTypes[1].id, 'snap_expedited');
+    assert.strictEqual(obj.slaTypes[2].id, 'tanf_standard');
+  });
+
+  await t.test('appendAtPath - does nothing when target is not an array', () => {
+    const obj = { config: { key: 'value' } };
+    appendAtPath(obj, '$.config', { extra: 'item' });
+    assert.deepStrictEqual(obj.config, { key: 'value' }); // unchanged
+  });
+
+  // ==========================================================================
+  // rootExists and checkPathExists with filter expressions
+  // ==========================================================================
+
+  await t.test('rootExists - returns true for filter expression path', () => {
+    const obj = { slaTypes: [{ id: 'snap_standard' }] };
+    assert.strictEqual(rootExists(obj, "$.slaTypes[?(@.id == 'snap_standard')].durationDays"), true);
+  });
+
+  await t.test('rootExists - returns false when root array does not exist', () => {
+    const obj = { transitions: [] };
+    assert.strictEqual(rootExists(obj, "$.slaTypes[?(@.id == 'snap_expedited')]"), false);
+  });
+
+  await t.test('checkPathExists - returns fullPathExists for filter path where item exists', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 },
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    const result = checkPathExists(obj, "$.slaTypes[?(@.id == 'snap_expedited')].durationDays");
+    assert.strictEqual(result.rootExists, true);
+    assert.strictEqual(result.fullPathExists, true);
+    assert.strictEqual(result.missingAt, null);
+  });
+
+  await t.test('checkPathExists - returns fullPathExists false when filter finds no match', () => {
+    const obj = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 }
+      ]
+    };
+    const result = checkPathExists(obj, "$.slaTypes[?(@.id == 'snap_expedited')].durationDays");
+    assert.strictEqual(result.rootExists, true);
+    assert.strictEqual(result.fullPathExists, false);
+  });
+
+  // ==========================================================================
+  // applyOverlay - filter expression and append action
+  // ==========================================================================
+
+  await t.test('applyOverlay - update modifies a filter-matched item property', () => {
+    const spec = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 },
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    const overlay = {
+      actions: [
+        {
+          target: "$.slaTypes[?(@.id == 'snap_expedited')].durationDays",
+          description: 'Extend SNAP expedited to 10 days per state waiver',
+          update: 10
+        }
+      ]
+    };
+
+    const { result, warnings } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.strictEqual(result.slaTypes[1].durationDays, 10);
+    assert.strictEqual(result.slaTypes[0].durationDays, 30); // unchanged
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  await t.test('applyOverlay - remove with filter removes matched item from array', () => {
+    const spec = {
+      metrics: [
+        { id: 'time_to_claim', label: 'Time to Claim' },
+        { id: 'release_rate', label: 'Release Rate' },
+        { id: 'completion_time', label: 'Completion Time' }
+      ]
+    };
+    const overlay = {
+      actions: [
+        {
+          target: "$.metrics[?(@.id == 'release_rate')]",
+          description: 'Remove release_rate metric',
+          remove: true
+        }
+      ]
+    };
+
+    const { result, warnings } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.strictEqual(result.metrics.length, 2);
+    assert.ok(result.metrics.every(m => m.id !== 'release_rate'));
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  await t.test('applyOverlay - append adds items to an array without removing baseline items', () => {
+    const spec = {
+      slaTypes: [
+        { id: 'snap_standard', durationDays: 30 },
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    const overlay = {
+      actions: [
+        {
+          target: '$.slaTypes',
+          description: 'Add TANF standard SLA type',
+          append: { id: 'tanf_standard', durationDays: 45 }
+        }
+      ]
+    };
+
+    const { result, warnings } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.strictEqual(result.slaTypes.length, 3);
+    assert.strictEqual(result.slaTypes[0].id, 'snap_standard'); // baseline preserved
+    assert.strictEqual(result.slaTypes[1].id, 'snap_expedited'); // baseline preserved
+    assert.strictEqual(result.slaTypes[2].id, 'tanf_standard'); // new item appended
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  await t.test('applyOverlay - append can add multiple items at once', () => {
+    const spec = {
+      transitions: [
+        { trigger: 'claim', from: 'pending', to: 'in_progress' }
+      ]
+    };
+    const overlay = {
+      actions: [
+        {
+          target: '$.transitions',
+          description: 'Add state-specific transitions',
+          append: [
+            { trigger: 'pend', from: 'in_progress', to: 'pending_review' },
+            { trigger: 'unpend', from: 'pending_review', to: 'in_progress' }
+          ]
+        }
+      ]
+    };
+
+    const { result, warnings } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.strictEqual(result.transitions.length, 3);
+    assert.strictEqual(result.transitions[0].trigger, 'claim'); // baseline preserved
+    assert.strictEqual(result.transitions[1].trigger, 'pend');
+    assert.strictEqual(result.transitions[2].trigger, 'unpend');
+    assert.strictEqual(warnings.length, 0);
+  });
+
+  await t.test('applyOverlay - does not mutate original spec when using filter path', () => {
+    const spec = {
+      slaTypes: [
+        { id: 'snap_expedited', durationDays: 7 }
+      ]
+    };
+    const overlay = {
+      actions: [
+        {
+          target: "$.slaTypes[?(@.id == 'snap_expedited')].durationDays",
+          update: 10
+        }
+      ]
+    };
+
+    const { result } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.strictEqual(spec.slaTypes[0].durationDays, 7); // original unchanged
+    assert.strictEqual(result.slaTypes[0].durationDays, 10);
+  });
+
+  await t.test('applyOverlay - does not mutate original spec when using append', () => {
+    const spec = {
+      transitions: [{ trigger: 'claim' }]
+    };
+    const overlay = {
+      actions: [
+        {
+          target: '$.transitions',
+          append: { trigger: 'complete' }
+        }
+      ]
+    };
+
+    const { result } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.strictEqual(spec.transitions.length, 1); // original unchanged
+    assert.strictEqual(result.transitions.length, 2);
+  });
+
+  await t.test('applyOverlay - skips filter actions for files without the root key', () => {
+    const spec = {
+      Person: { properties: { name: { type: 'string' } } }
+    };
+    const overlay = {
+      actions: [
+        {
+          target: "$.slaTypes[?(@.id == 'snap_expedited')].durationDays",
+          update: 10
+        }
+      ]
+    };
+
+    const { result, warnings } = applyOverlay(spec, overlay, { silent: true });
+
+    assert.deepStrictEqual(result, spec); // unchanged
+    assert.strictEqual(warnings.length, 0); // no warning — root simply not present
   });
 
 });

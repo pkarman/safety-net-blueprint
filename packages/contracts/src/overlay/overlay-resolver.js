@@ -2,80 +2,227 @@
  * OpenAPI Overlay Resolution Module
  *
  * Core functions for applying OpenAPI Overlay Specification (1.0.0)
- * transformations to base schemas.
+ * transformations to base schemas, including behavioral YAML files.
+ *
+ * Supports:
+ * - Basic JSONPath: $.foo.bar.baz
+ * - Filter expressions: $.items[?(@.id == 'value')].field
+ * - append: action for non-destructive array additions
  */
 
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import yaml from 'js-yaml';
 
-/**
- * Apply a JSONPath-like target to get values in an object.
- * Supports basic JSONPath: $.foo.bar.baz
- * @param {Object} obj - The object to traverse
- * @param {string} path - JSONPath-like path (e.g., "$.Person.properties.name")
- * @returns {*} The value at the path, or undefined if not found
- */
-export function resolvePath(obj, path) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const parts = cleanPath.split('.');
+// =============================================================================
+// Path Parsing
+// =============================================================================
 
-  let current = obj;
-  for (const part of parts) {
-    if (current === undefined || current === null) {
-      return undefined;
+/**
+ * Parse a JSONPath string into tokens.
+ * Handles property access (keys) and filter expressions ([?(@.field == value)]).
+ *
+ * @param {string} path - JSONPath-like path (e.g., "$.slaTypes[?(@.id == 'x')].durationDays")
+ * @returns {Array<{type: 'key', value: string} | {type: 'filter', field: string, value: *}>}
+ */
+export function parsePath(path) {
+  const cleanPath = path.startsWith('$.') ? path.slice(2) : (path.startsWith('$') ? path.slice(1) : path);
+  const tokens = [];
+  let i = 0;
+  let current = '';
+
+  while (i < cleanPath.length) {
+    if (cleanPath[i] === '[') {
+      if (current) {
+        tokens.push({ type: 'key', value: current });
+        current = '';
+      }
+      const end = cleanPath.indexOf(']', i);
+      if (end === -1) break;
+      const content = cleanPath.slice(i + 1, end);
+      tokens.push(parseFilterToken(content));
+      i = end + 1;
+      if (i < cleanPath.length && cleanPath[i] === '.') i++;
+    } else if (cleanPath[i] === '.') {
+      if (current) {
+        tokens.push({ type: 'key', value: current });
+        current = '';
+      }
+      i++;
+    } else {
+      current += cleanPath[i];
+      i++;
     }
-    current = current[part];
+  }
+
+  if (current) {
+    tokens.push({ type: 'key', value: current });
+  }
+
+  return tokens;
+}
+
+/**
+ * Parse a filter expression string like ?(@.field == 'value') or ?(@.field == 42)
+ * @param {string} content - Content inside brackets, e.g. "?(@.id == 'snap_expedited')"
+ * @returns {{type: 'filter', field: string, value: *}}
+ */
+function parseFilterToken(content) {
+  // Match ?(@.field == 'value'), ?(@.field == "value"), or ?(@.field == value)
+  const quoted = content.match(/^\?\(@\.(\w+)\s*==\s*'([^']*)'\)$/) ||
+                 content.match(/^\?\(@\.(\w+)\s*==\s*"([^"]*)"\)$/);
+  if (quoted) {
+    return { type: 'filter', field: quoted[1], value: quoted[2] };
+  }
+
+  const unquoted = content.match(/^\?\(@\.(\w+)\s*==\s*([^)]+)\)$/);
+  if (unquoted) {
+    let value = unquoted[2].trim();
+    if (!isNaN(value)) value = Number(value);
+    else if (value === 'true') value = true;
+    else if (value === 'false') value = false;
+    return { type: 'filter', field: unquoted[1], value };
+  }
+
+  // Unrecognized bracket notation — treat as opaque key
+  return { type: 'key', value: `[${content}]` };
+}
+
+/**
+ * Navigate an object following a sequence of tokens, returning the value
+ * at the end of the path. For filter tokens, returns the first matching item.
+ * @param {Object} obj
+ * @param {Array} tokens - Result of parsePath()
+ * @returns {*} Value at the path, or undefined
+ */
+function navigatePath(obj, tokens) {
+  let current = obj;
+  for (const token of tokens) {
+    if (current === undefined || current === null) return undefined;
+
+    if (token.type === 'key') {
+      current = current[token.value];
+    } else if (token.type === 'filter') {
+      if (!Array.isArray(current)) return undefined;
+      const match = current.find(item => item && item[token.field] === token.value);
+      if (!match) return undefined;
+      current = match;
+    }
   }
   return current;
 }
 
+// =============================================================================
+// Path Operations
+// =============================================================================
+
 /**
- * Set a value at a JSONPath-like location
+ * Apply a JSONPath-like target to get values in an object.
+ * Supports basic JSONPath ($.foo.bar.baz) and filter expressions
+ * ($.items[?(@.id == 'value')].field).
+ *
+ * @param {Object} obj - The object to traverse
+ * @param {string} path - JSONPath-like path
+ * @returns {*} The value at the path, or undefined if not found
+ */
+export function resolvePath(obj, path) {
+  return navigatePath(obj, parsePath(path));
+}
+
+/**
+ * Set a value at a JSONPath-like location.
+ * For object values, merges with the existing object. For arrays and scalars,
+ * replaces. Supports filter expressions in intermediate path segments.
+ *
  * @param {Object} obj - The object to modify
  * @param {string} path - JSONPath-like path
  * @param {*} value - The value to set
  */
 export function setAtPath(obj, path, value) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const parts = cleanPath.split('.');
-  const lastPart = parts.pop();
+  const tokens = parsePath(path);
+  if (tokens.length === 0) return;
 
+  const lastToken = tokens[tokens.length - 1];
+  const navTokens = tokens.slice(0, -1);
+
+  // Navigate to the parent
   let current = obj;
-  for (const part of parts) {
-    if (current[part] === undefined) {
-      current[part] = {};
+  for (const token of navTokens) {
+    if (token.type === 'key') {
+      if (current[token.value] === undefined) {
+        current[token.value] = {};
+      }
+      current = current[token.value];
+    } else if (token.type === 'filter') {
+      if (!Array.isArray(current)) return;
+      const match = current.find(item => item && item[token.field] === token.value);
+      if (!match) return;
+      current = match;
     }
-    current = current[part];
   }
 
-  // For objects, merge rather than replace to support adding properties
-  if (typeof value === 'object' && !Array.isArray(value) && typeof current[lastPart] === 'object' && !Array.isArray(current[lastPart])) {
-    current[lastPart] = { ...current[lastPart], ...value };
-  } else {
-    current[lastPart] = value;
+  // Set at the last token
+  if (lastToken.type === 'key') {
+    const key = lastToken.value;
+    // For objects, merge rather than replace to support adding properties
+    if (typeof value === 'object' && !Array.isArray(value) && typeof current[key] === 'object' && !Array.isArray(current[key])) {
+      current[key] = { ...current[key], ...value };
+    } else {
+      current[key] = value;
+    }
+  } else if (lastToken.type === 'filter') {
+    // Filter as last token: merge value into all matching array items
+    if (!Array.isArray(current)) return;
+    for (const item of current) {
+      if (item && item[lastToken.field] === lastToken.value) {
+        if (typeof value === 'object' && !Array.isArray(value)) {
+          Object.assign(item, value);
+        }
+      }
+    }
   }
 }
 
 /**
- * Remove a value at a JSONPath-like location
+ * Remove a value at a JSONPath-like location.
+ * When the last path segment is a filter expression, removes all matching
+ * items from the parent array.
+ *
  * @param {Object} obj - The object to modify
  * @param {string} path - JSONPath-like path
  */
 export function removeAtPath(obj, path) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const parts = cleanPath.split('.');
-  const lastPart = parts.pop();
+  const tokens = parsePath(path);
+  if (tokens.length === 0) return;
 
+  const lastToken = tokens[tokens.length - 1];
+  const navTokens = tokens.slice(0, -1);
+
+  // Navigate to the parent
   let current = obj;
-  for (const part of parts) {
-    if (current[part] === undefined) {
-      return; // Path doesn't exist
+  for (const token of navTokens) {
+    if (token.type === 'key') {
+      if (current[token.value] === undefined) return;
+      current = current[token.value];
+    } else if (token.type === 'filter') {
+      if (!Array.isArray(current)) return;
+      const match = current.find(item => item && item[token.field] === token.value);
+      if (!match) return;
+      current = match;
     }
-    current = current[part];
   }
 
-  delete current[lastPart];
+  if (lastToken.type === 'key') {
+    delete current[lastToken.value];
+  } else if (lastToken.type === 'filter') {
+    // Remove all matching items from the parent array
+    if (!Array.isArray(current)) return;
+    for (let i = current.length - 1; i >= 0; i--) {
+      if (current[i] && current[i][lastToken.field] === lastToken.value) {
+        current.splice(i, 1);
+      }
+    }
+  }
 }
 
 /**
@@ -86,23 +233,31 @@ export function removeAtPath(obj, path) {
  * @returns {boolean} True if rename succeeded, false if source doesn't exist
  */
 export function renameAtPath(obj, path, newName) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const parts = cleanPath.split('.');
-  const oldName = parts.pop();
+  const tokens = parsePath(path);
+  if (tokens.length === 0) return false;
 
+  const lastToken = tokens[tokens.length - 1];
+  if (lastToken.type !== 'key') return false;
+
+  const navTokens = tokens.slice(0, -1);
   let current = obj;
-  for (const part of parts) {
-    if (current[part] === undefined) {
-      return false; // Path doesn't exist
+  for (const token of navTokens) {
+    if (token.type === 'key') {
+      if (current[token.value] === undefined) return false;
+      current = current[token.value];
+    } else if (token.type === 'filter') {
+      if (!Array.isArray(current)) return false;
+      const match = current.find(item => item && item[token.field] === token.value);
+      if (!match) return false;
+      current = match;
     }
-    current = current[part];
   }
 
-  if (!current.hasOwnProperty(oldName)) {
-    return false; // Source property doesn't exist
+  const oldName = lastToken.value;
+  if (!Object.prototype.hasOwnProperty.call(current, oldName)) {
+    return false;
   }
 
-  // Copy value to new key and delete old key
   current[newName] = current[oldName];
   delete current[oldName];
   return true;
@@ -115,28 +270,41 @@ export function renameAtPath(obj, path, newName) {
  * @returns {{ rootExists: boolean, fullPathExists: boolean, missingAt: string | null }}
  */
 export function checkPathExists(obj, path) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const parts = cleanPath.split('.');
-
-  // Check if root schema exists (e.g., "Person" or "Application")
-  const rootPart = parts[0];
-  if (!obj.hasOwnProperty(rootPart)) {
+  const tokens = parsePath(path);
+  if (tokens.length === 0) {
     return { rootExists: false, fullPathExists: false, missingAt: null };
   }
 
-  // Check full path to see where it stops existing
-  let current = obj;
+  // Root must be a key token
+  const rootToken = tokens[0];
+  if (rootToken.type !== 'key' || !Object.prototype.hasOwnProperty.call(obj, rootToken.value)) {
+    return { rootExists: false, fullPathExists: false, missingAt: null };
+  }
 
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i];
-    if (current === undefined || current === null || !current.hasOwnProperty(part)) {
-      return {
-        rootExists: true,
-        fullPathExists: false,
-        missingAt: parts.slice(0, i + 1).join('.')
-      };
+  // Check full path
+  let current = obj;
+  let pathStr = '';
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    if (token.type === 'key') {
+      if (current === undefined || current === null || !Object.prototype.hasOwnProperty.call(current, token.value)) {
+        pathStr += (pathStr ? '.' : '') + token.value;
+        return { rootExists: true, fullPathExists: false, missingAt: pathStr };
+      }
+      pathStr += (pathStr ? '.' : '') + token.value;
+      current = current[token.value];
+    } else if (token.type === 'filter') {
+      if (!Array.isArray(current)) {
+        return { rootExists: true, fullPathExists: false, missingAt: pathStr + `[?(@.${token.field} == '${token.value}')]` };
+      }
+      const match = current.find(item => item && item[token.field] === token.value);
+      if (!match) {
+        return { rootExists: true, fullPathExists: false, missingAt: pathStr + `[?(@.${token.field} == '${token.value}')]` };
+      }
+      current = match;
     }
-    current = current[part];
   }
 
   return { rootExists: true, fullPathExists: true, missingAt: null };
@@ -149,9 +317,11 @@ export function checkPathExists(obj, path) {
  * @returns {boolean} True if the root schema exists
  */
 export function rootExists(obj, path) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const rootPart = cleanPath.split('.')[0];
-  return obj.hasOwnProperty(rootPart);
+  const tokens = parsePath(path);
+  if (tokens.length === 0) return false;
+  const rootToken = tokens[0];
+  if (rootToken.type !== 'key') return false;
+  return Object.prototype.hasOwnProperty.call(obj, rootToken.value);
 }
 
 /**
@@ -161,20 +331,45 @@ export function rootExists(obj, path) {
  * @param {*} value - The value to set (replaces entirely)
  */
 export function replaceAtPath(obj, path, value) {
-  const cleanPath = path.startsWith('$.') ? path.slice(2) : path;
-  const parts = cleanPath.split('.');
-  const lastPart = parts.pop();
+  const tokens = parsePath(path);
+  if (tokens.length === 0) return;
+
+  const lastToken = tokens[tokens.length - 1];
+  const navTokens = tokens.slice(0, -1);
 
   let current = obj;
-  for (const part of parts) {
-    if (current[part] === undefined) {
-      current[part] = {};
+  for (const token of navTokens) {
+    if (token.type === 'key') {
+      if (current[token.value] === undefined) {
+        current[token.value] = {};
+      }
+      current = current[token.value];
+    } else if (token.type === 'filter') {
+      if (!Array.isArray(current)) return;
+      const match = current.find(item => item && item[token.field] === token.value);
+      if (!match) return;
+      current = match;
     }
-    current = current[part];
   }
 
-  // Complete replacement, no merging
-  current[lastPart] = value;
+  if (lastToken.type === 'key') {
+    current[lastToken.value] = value;
+  }
+}
+
+/**
+ * Append items to an array at a JSONPath-like location.
+ * Does not remove existing items — use update: to replace the whole array.
+ *
+ * @param {Object} obj - The object to modify
+ * @param {string} path - JSONPath-like path to an array
+ * @param {*} items - Item or array of items to append
+ */
+export function appendAtPath(obj, path, items) {
+  const arr = navigatePath(obj, parsePath(path));
+  if (!Array.isArray(arr)) return;
+  const toAppend = Array.isArray(items) ? items : [items];
+  arr.push(...toAppend);
 }
 
 /**
@@ -218,7 +413,9 @@ export function loadReplacementRef(refPath, baseDir) {
 }
 
 /**
- * Apply overlay actions to a spec
+ * Apply overlay actions to a spec.
+ * Supports: update, remove, rename, replace (with optional $ref), append.
+ *
  * @param {Object} spec - The base specification object
  * @param {Object} overlay - The overlay object with actions
  * @param {Object} options - Options for applying overlay
@@ -236,7 +433,7 @@ export function applyOverlay(spec, overlay, options = {}) {
   }
 
   for (const action of overlay.actions) {
-    const { target, update, remove, rename, replace } = action;
+    const { target, update, remove, rename, replace, append } = action;
 
     if (!target) {
       if (!silent) {
@@ -245,7 +442,7 @@ export function applyOverlay(spec, overlay, options = {}) {
       continue;
     }
 
-    // Check if this file has the root schema (e.g., Person, Application)
+    // Check if this file has the root schema (e.g., Person, transitions, slaTypes)
     if (!rootExists(result, target)) {
       continue;
     }
@@ -256,7 +453,7 @@ export function applyOverlay(spec, overlay, options = {}) {
     // Determine if this is an "update properties" action (adding new fields is expected)
     const isAddingProperties = target.endsWith('.properties') && typeof update === 'object';
 
-    // Warn if target doesn't fully exist (except when intentionally adding new properties)
+    // Warn if target doesn't fully exist (except when intentionally adding new properties or replacing)
     if (!pathCheck.fullPathExists && !isAddingProperties && !replace) {
       const actionDesc = action.description || target;
       warnings.push(`Target $.${pathCheck.missingAt} does not exist in base schema (action: "${actionDesc}")`);
@@ -297,6 +494,12 @@ export function applyOverlay(spec, overlay, options = {}) {
       replaceAtPath(result, target, replacementValue);
       if (!silent && action.description) {
         console.log(`  - Replaced: ${action.description}`);
+      }
+    } else if (append !== undefined) {
+      // Custom extension: append action (adds items to existing array)
+      appendAtPath(result, target, append);
+      if (!silent && action.description) {
+        console.log(`  - Appended: ${action.description}`);
       }
     } else if (update !== undefined) {
       setAtPath(result, target, update);
