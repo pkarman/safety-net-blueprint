@@ -22,7 +22,7 @@ Every state machine transition and lifecycle hook emits an immutable domain even
 
 The task lifecycle is governed by a declarative state machine (`workflow-state-machine.yaml`) rather than ad-hoc endpoint logic. Tasks move through states like `pending` → `in_progress` → `awaiting_client` → `in_progress` → `completed`, with each transition triggered by an explicit action (claim, release, complete, await-client, etc.). Each transition trigger becomes an RPC endpoint (e.g., `POST /workflow/tasks/{id}/claim`). Transitions declare guards (preconditions that must be true for the transition to be allowed) and effects (side effects that execute when the transition fires, such as updating fields or emitting events) — adding a new transition is a YAML table row, not new endpoint code. [Spec: `workflow-state-machine.yaml`](../../../packages/contracts/workflow-state-machine.yaml)
 
-For the full state transition table, guard definitions, and effect specifications see [workflow-state-machine.yaml](../../../packages/contracts/workflow-state-machine.yaml) and [Task Lifecycle States](workflow-design-rationale.md#task-lifecycle-states) in the design reference.
+For the full state transition table, guard definitions, and effect specifications see [workflow-state-machine.yaml](../../../packages/contracts/workflow-state-machine.yaml) and [State machine](workflow-design-rationale.md#state-machine) in the design reference.
 
 ### Rules
 
@@ -39,7 +39,7 @@ Rules use JSON Logic conditions and `first-match-wins` evaluation. The baseline 
 
 Federal regulations impose strict processing deadlines on benefits applications — 7 days for expedited SNAP, 30 days for standard SNAP, 45 days for most Medicaid, 90 days for disability-related Medicaid. SLA types define these deadlines and the conditions under which the clock pauses (e.g., while waiting on the client) and resumes. Each task carries a `slaInfo` array with one entry per applicable SLA type, tracking deadline status in real time. SLA types are auto-assigned at task creation based on the task's fields and updated automatically on every state transition.
 
-Baseline SLA types: `snap_expedited` (7 days), `snap_standard` (30 days), `medicaid_standard` (45 days), `medicaid_disability` (90 days). Defined in [`workflow-sla-types.yaml`](../../../packages/contracts/workflow-sla-types.yaml). See [SLA Types and Clock Management](workflow-design-rationale.md#sla-types-and-clock-management) for design rationale.
+Baseline SLA types: `snap_expedited` (7 days), `snap_standard` (30 days), `medicaid_standard` (45 days), `medicaid_disability` (90 days). Defined in [`workflow-sla-types.yaml`](../../../packages/contracts/workflow-sla-types.yaml). See [SLA and deadline management](workflow-design-rationale.md#sla-and-deadline-management) for design rationale.
 
 ### Metrics
 
@@ -52,6 +52,7 @@ Baseline metrics: task time to claim (duration), tasks in queue (count), release
 The baseline contracts are a starting point. States customize via overlays:
 
 - **State machine**: add transitions, extend guards, add effects to existing transitions
+- **Multiple lifecycles**: add task-type-specific states and transitions to the state machine, scoped via `taskType` guards, to support multiple lifecycles within the same domain (e.g., fair hearing tasks alongside standard casework tasks) — see issue #193
 - **Rules**: replace `workflow-rules.yaml` entirely with state-specific assignment and priority logic
 - **SLA types**: replace or extend `workflow-sla-types.yaml` with state-specific deadlines and pause conditions (overlay support: issue #174)
 - **Metrics**: replace or extend `workflow-metrics.yaml` with state-specific metrics and targets (overlay support: issue #174)
@@ -66,7 +67,18 @@ See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mecha
 | Cross-domain event wiring | Application submitted → review task auto-created. Events infrastructure is in place; wiring that maps domain events to task creation is not yet implemented. |
 | Role-based access control | Guards reference `$caller.role` and `$caller.type`; enforcement is at the service layer until RBAC is implemented. |
 | Overlay support for behavioral YAMLs | States can't yet overlay `*-sla-types.yaml`, `*-metrics.yaml`, or `*-state-machine.yaml`. See issue #174. |
-| Skill-based assignment | Rules support it; no built-in assignment actions yet for round-robin or least-loaded routing. |
+| Named routing strategies + skill-based assignment | Queue `routingStrategy` field; rules support skill-based routing but no built-in round-robin or least-loaded routing actions yet. See issue #162. |
+| Pull routing (claim-next) | `POST /workflow/queues/{id}/claim-next` — atomically select and claim the next best task. See issue #196. |
+| Task dependencies | `dependsOnTaskId` field, `awaiting_prerequisite` state, event-triggered unblocking when dependency completes. See issue #195. |
+| Task type as lifecycle discriminator | `taskType` field enabling multiple lifecycles (e.g., fair hearing) within the same state machine via guards. See issue #193. |
+| Delegation / out-of-office routing | Contract point for absence coverage so tasks auto-redirect when a caseworker is unavailable. See issue #188. |
+| SLA goal tier | Soft performance target (Goal) alongside the hard deadline, following Pega's three-tier model. See issue #189. |
+| Holiday calendar support | Agency-specific holiday exclusions for `calendarType: business` SLA calculations. See issue #190. |
+| SLA deadline recalculation on attribute change | Recalculate SLA deadlines when `isExpedited` or `programType` changes via `onUpdate`. See issue #191. |
+| Deadline extensions | `extend-deadline` transition with required justification and audit event. See issue #192. |
+| Grace period timer | Baseline `auto-adverse-action` timer (`after: 0d`) as an explicit overlay point for post-deadline grace periods. See issue #197. |
+
+For a comprehensive gap assessment including items out of scope and delegated to the platform layer, see [Known Gaps and Future Considerations](workflow-design-rationale.md#known-gaps-and-future-considerations) in the design reference.
 
 ## Contract Artifacts
 
@@ -82,7 +94,7 @@ See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mecha
 
 | Document | Description |
 |----------|-------------|
-| [Workflow Design Reference](workflow-design-rationale.md) | Feature-by-feature reference: vendor comparisons, design decisions, customization points |
+| [Workflow Design Reference](workflow-design-rationale.md) | Industry reference: vendor comparisons, design decisions, customization points, and comprehensive gap assessment |
 | [Workflow Prototype](../../prototypes/workflow-prototype.md) | Full design spec — states, transitions, rules, metrics |
 | [Domain Design](../domain-design.md) | Workflow section in the domain overview |
 | [Case Management](case-management.md) | Staff, teams, offices — closely related domain |
