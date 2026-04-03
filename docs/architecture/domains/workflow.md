@@ -66,7 +66,6 @@ See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mecha
 | Cross-domain event wiring | Application submitted → review task auto-created. Events infrastructure is in place; wiring that maps domain events to task creation is not yet implemented. |
 | Role-based access control | Guards reference `$caller.role` and `$caller.type`; enforcement is at the service layer until RBAC is implemented. |
 | Overlay support for behavioral YAMLs | States can't yet overlay `*-sla-types.yaml`, `*-metrics.yaml`, or `*-state-machine.yaml`. See issue #174. |
-| SLA breach transition | `slaInfo.*.status` becomes `breached` via the SLA engine; no timer-triggered state machine transition fires at the breach moment. See [Known gaps](workflow-design-rationale.md#known-gaps-and-future-considerations). |
 | Skill-based assignment | Rules support it; no built-in assignment actions yet for round-robin or least-loaded routing. |
 
 ## Contract Artifacts
@@ -74,7 +73,7 @@ See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mecha
 | Artifact | File |
 |----------|------|
 | OpenAPI spec | `workflow-openapi.yaml` — Tasks, Queues, Events, Metrics |
-| State machine | `workflow-state-machine.yaml` — 9 states, 12 transitions, guards, effects |
+| State machine | `workflow-state-machine.yaml` — 8 states, 21 transitions (including 4 timer-triggered), guards, effects |
 | Rules | `workflow-rules.yaml` — Assignment and priority rule sets |
 | SLA types | `workflow-sla-types.yaml` — 4 baseline SLA types |
 | Metrics | `workflow-metrics.yaml` — 5 baseline metrics |
