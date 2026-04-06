@@ -59,27 +59,6 @@ The baseline contracts are a starting point. States customize via overlays:
 
 See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mechanics.
 
-## Future Work
-
-| Capability | Notes |
-|------------|-------|
-| Polymorphic subject association | Tasks should link to applications, cases, and other entities via `subjectId`/`subjectType` rather than entity-specific FK fields. See issue #177. |
-| Cross-domain event wiring | Application submitted → review task auto-created. Events infrastructure is in place; wiring that maps domain events to task creation is not yet implemented. |
-| Role-based access control | Guards reference `$caller.role` and `$caller.type`; enforcement is at the service layer until RBAC is implemented. |
-| Overlay support for behavioral YAMLs | States can't yet overlay `*-sla-types.yaml`, `*-metrics.yaml`, or `*-state-machine.yaml`. See issue #174. |
-| Named routing strategies + skill-based assignment | Queue routing strategy field and built-in routing actions. See issue #162. |
-| Pull routing | Caseworkers request their next best task rather than selecting from a queue. See issue #196. |
-| Task dependencies | Blocking one task on completion of another, with automatic unblocking. See issue #195. |
-| Task type as lifecycle discriminator | `taskType` as a first-class state machine concept enabling multiple lifecycles. See issue #193. |
-| Delegation / out-of-office routing | Automatic task redirection when a caseworker is unavailable. See issue #188. |
-| SLA goal tier | Soft performance target alongside the hard regulatory deadline. See issue #189. |
-| Holiday calendar support | Agency-specific holiday exclusions for business-day SLA calculations. See issue #190. |
-| SLA deadline recalculation | Recalculate deadlines when task attributes change after creation. See issue #191. |
-| Deadline extensions | Formal process for extending a deadline with documented justification. See issue #192. |
-| Grace period timer | Explicit overlay point for post-deadline grace periods before adverse action. See issue #197. |
-
-For a comprehensive gap assessment including items out of scope and platform-level concerns, see [Known Gaps and Future Considerations](workflow-design-rationale.md#known-gaps-and-future-considerations) in the design reference.
-
 ## Contract Artifacts
 
 | Artifact | File |
