@@ -215,7 +215,7 @@ Routing logic — which queue a task goes to, what priority it gets — varies e
   | Rule order | First matching automation | Rule processing order | — | — | Router activity scripts; decision tree precedence | Rule number precedence (lower = higher priority) |
 
 - **Pega supports both push routing (system assigns) and pull routing (Get Next Work algorithm).** Pull routing presents the next best assignment to a worker based on urgency, availability, and skills — the worker requests work rather than having it assigned. The blueprint uses push routing only; pull routing is a future consideration for caseworker queue management. Appian's Automated Case Routing module explicitly names its strategies (round-robin, workload balance, shared queue), which is the same model as the `routingStrategy` field planned for the Queue entity — confirming that named strategies are the industry-standard approach.
-- **Rules use `first-match-wins` evaluation — simple, predictable, and easy to debug.** Rules are evaluated in order and the first match wins. States that need more complex routing (e.g., weighted load balancing) can implement that as a rule action.
+- **Rules use `first-match-wins` evaluation — simple, predictable, and easy to debug.** Rules are evaluated in order and the first match wins. Multi-factor weighted scoring — combining urgency, program type, task age, and other attributes into a numeric priority — is not expressible with `first-match-wins` and is a known gap.
 - **Rules are invoked via `evaluate-rules` effects in the state machine — not embedded in rule definitions.** The state machine declares when rules run; the rules engine decides what happens. Neither system needs to understand the other's internals.
 - **`escalate` uses `evaluate-rules: priority`, not `set priority: high`.** Hardcoding a priority value would break states with different escalation behavior per program. `evaluate-rules: priority` delegates the decision to the rules engine, which can apply different priority logic for expedited vs. standard cases. This is especially important in benefits processing, where SNAP expedited and standard cases have different deadline profiles.
 
@@ -385,13 +385,15 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 
 | Capability | Industry standard | Blueprint status |
 |---|---|---|
-| Skill-based routing | Route to agents matching required skills (JSM, ServiceNow, Pega, Appian) | **Partial** — rules engine supports skill conditions; no built-in named routing action. See issue #162. |
-| Workload-based routing | Route to least-loaded or most-available agent (ServiceNow, Appian Workload Balance, Pega Get Next Work) | **Partial** — see issue #162. |
-| Named routing strategies | Explicit strategies: round-robin, least-loaded, shared queue (Appian Automated Case Routing, ServiceNow) | **Planned** — see issue #162. |
+| Skill-based routing | Route to agents matching required skills (JSM, ServiceNow, Pega, Appian) | **Planned** — see issue #199. |
+| Workload-based routing | Route to least-loaded or most-available agent (ServiceNow, Appian Workload Balance, Pega Get Next Work) | **Planned** — see issue #198. |
+| Named routing strategies | Explicit strategies: round-robin, least-loaded, shared queue (Appian Automated Case Routing, ServiceNow) | **Planned** — see issue #198. |
 | Pull routing / Get Next Work | Worker requests their next best assignment; system selects based on urgency, skills, and availability (Pega Get Next Work) | **Planned** — see issue #196. |
 | Delegation / out-of-office routing | When a caseworker is unavailable, tasks automatically redirect to a substitute or back to the queue (JSM, ServiceNow, Pega, Appian, Salesforce) | **Planned** — see issue #188. |
 | Overflow routing | When a queue exceeds capacity, tasks overflow to a backup queue (JSM, ServiceNow, Pega) | **Adapter layer** — high-volume routing logic is an adapter concern. |
 | Bulk reassignment | Supervisor reassigns multiple tasks at once (JSM, ServiceNow, Curam) | **Planned** — see issue #183. |
+| Weighted priority scoring | Multi-factor priority scoring combining urgency, program type, age, and other attributes into a numeric score (Pega Urgency 1–100, ServiceNow urgency × impact) | **Planned** — see issue #200. |
+| Delegation / identity acting-as | One user acting on behalf of another with a dual-identity audit trail distinguishing who acted from who they acted as (JSM, ServiceNow, Pega) | **Not in scope** — a cross-cutting platform concern resolved before the state machine sees the request. See issue #181. |
 
 ### SLA and deadline management
 
@@ -431,6 +433,13 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 | Real-time event streaming / webhooks | Push notifications to external subscribers when events fire (JSM webhooks, ServiceNow Event Management, Pega, Appian) | **Not in scope** — a cross-cutting platform concern; real-time delivery should not be duplicated per domain. |
 | Event replay | Ability to replay past events for debugging or migrating to a new system (ServiceNow, Pega, Appian) | **Not in scope** — a cross-cutting platform operations concern. |
 | Notification on state change | Configurable push notifications on escalation, block, completion, etc. | **Not in scope** — handled by the [communications domain](../cross-cutting/communication.md), which subscribes to domain events. |
+
+### Reporting and analytics
+
+| Capability | Industry standard | Blueprint status |
+|---|---|---|
+| Operational reporting | Built-in reports on caseload, productivity, backlog, and team performance (JSM, ServiceNow, Pega, Appian, Curam) | **Not in scope** — a reporting-domain concern. Workflow metrics provide the raw data; report generation is out of scope. |
+| Staffing forecasting | Predictive models for upcoming workload and staffing needs based on historical trends and upcoming deadlines (Pega, ServiceNow, Curam) | **Not in scope** — a reporting-domain concern. |
 
 ### Compliance and government-specific
 
