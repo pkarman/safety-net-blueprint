@@ -174,7 +174,7 @@ Workflow systems enforce preconditions on state transitions to prevent unauthori
   | Role check | Project role condition | Role condition | Candidate group check | Potential owners list |
   | Compound condition | Multiple validators | Multiple conditions | Composite expression | — |
 
-- **`callerIsSupervisor` is a named guard stub — RBAC will plug into this contract point when implemented.** `callerIsSupervisor` references `$caller.role`, which is the convention for what the [role-based access control](#role-based-access-control) service will expose. Until then, enforcement is at the service layer.
+- **`callerIsSupervisor` is a named guard stub — RBAC will plug into this contract point when implemented.** `callerIsSupervisor` references `$caller.role`, which is the convention for what the platform-level RBAC service will expose. Until then, enforcement is at the service layer.
 - **Automated verification callbacks use a dedicated `system-resume` trigger, not a relaxed version of the human `resume` guard.** IEVS and FDSH return results asynchronously. A separate trigger keeps domain events distinguishable and allows the request body to carry verification result data (source, result summary). SNAP and Medicaid quality control requirements also require this distinction in the audit trail — automated callbacks from IEVS, FDSH, and state data hubs are system actors, not human caseworkers.
 - **Guards are defined at the top of the state machine and referenced by name across transitions — not duplicated inline.** Copying conditions to each transition creates inconsistency over time. Named guards stay consistent and make intent legible at a glance. Baseline guards:
 
@@ -196,7 +196,7 @@ Workflow systems enforce preconditions on state transitions to prevent unauthori
 **Customization points:**
 - States can add guards to existing transitions via overlay (e.g., restrict `claim` to workers assigned to the correct program team).
 - States can define additional named guards for their custom transitions.
-- Once [role-based access control](#role-based-access-control) is implemented, `callerIsSupervisor` can be tightened to reference the real role model without changing transition definitions.
+- Once platform-level RBAC is implemented, `callerIsSupervisor` can be tightened to reference the real role model without changing transition definitions.
 
 ---
 
@@ -259,7 +259,7 @@ Workflow systems that track SLA deadlines need to handle delays attributable to 
 
 **Customization points:**
 - States can override `slaClock` per state via overlay. A state that treats client non-response differently (e.g., stops rather than pauses) can do so without touching the baseline.
-- The actual clock-pause/resume/stop logic is evaluated by the SLA engine on every transition using the `pauseWhen`/`resumeWhen` conditions in `*-sla-types.yaml` (see [SLA types and clock management](#sla-types-and-clock-management)). The `slaClock` value on each state declares the intent; the SLA engine reads the task's current state when evaluating those conditions.
+- The actual clock-pause/resume/stop logic is evaluated by the SLA engine on every transition using the `pauseWhen`/`resumeWhen` conditions in `*-sla-types.yaml` (see [SLA type definitions](#sla-type-definitions)). The `slaClock` value on each state declares the intent; the SLA engine reads the task's current state when evaluating those conditions.
 
 ### SLA type definitions
 
@@ -419,7 +419,7 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 | Capability | Industry standard | Blueprint status |
 |---|---|---|
 | Role enforcement | Roles enforced by platform middleware on every operation | **Not in scope** — the workflow contract is complete: guards declare role requirements via `$caller.role` and `$caller.id`; the `callerIsSupervisor` and `callerIsSystem` guard stubs are the integration points. Authentication and caller context injection (`$caller.*`) is a cross-cutting platform concern that applies uniformly across all domains, not a per-domain implementation concern. Federal QC regulations require the `supervisor` role to be mapped from the state's role hierarchy (eligibility supervisor, unit manager, QC reviewer, etc.). |
-| Field-level access control | Caseworkers can view but not edit certain fields; supervisors see additional fields; sensitive data masked by role (all major platforms) | **Not in scope** — field-level access control is an RBAC platform concern that applies uniformly across all domains. The workflow domain declares which fields exist on Task; the RBAC system governs who can see and edit them. FLAC should be in scope for the RBAC design (see [Role-based access control](#role-based-access-control)), not added separately per domain. |
+| Field-level access control | Caseworkers can view but not edit certain fields; supervisors see additional fields; sensitive data masked by role (all major platforms) | **Not in scope** — field-level access control is an RBAC platform concern that applies uniformly across all domains. The workflow domain declares which fields exist on Task; the RBAC system governs who can see and edit them. FLAC should be in scope for the platform-level RBAC design, not added separately per domain. |
 | Confidential / sensitive case handling | Domestic violence address confidentiality, restricted-access cases, need-to-know enforcement (Curam, ServiceNow, Salesforce) | **Not in scope** — confidentiality is a property of the case, not the task. The [Case Management](case-management.md) domain owns the confidentiality model (restricted-access flags, need-to-know enforcement, DV address confidentiality). Workflow enforces access based on what case management and RBAC expose; it does not own the concept. |
 | Read access logging | Logging who viewed sensitive task data (PII/PHI), not just who changed state — required for HIPAA and federal QC (Curam, ServiceNow, Salesforce) | **Not in scope** — PHI/HIPAA read logging is a cross-cutting compliance infrastructure concern handled at the platform level (API gateway, database audit trail, security tooling), applied uniformly across all domains. The workflow domain captures state changes via domain events; read access logging is outside the contract boundary and is not a per-domain implementation concern. |
 
@@ -438,7 +438,7 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 |---|---|---|
 | Federal reporting exports | Structured exports for SNAP (FNS-388), Medicaid (T-MSIS), and other federal reporting requirements (Curam, Pega, ServiceNow) | **Not in scope** — the metrics contract covers operational KPIs; federal reporting formats are a reporting-domain concern. |
 | Fair hearing / appeals tracking | Dedicated workflow for applicant appeals with hearing date scheduling, statutory deadlines (90-day rule), and outcome tracking (Curam, Pega, ServiceNow) | **Planned** — the design path is clear: fair hearing states and transitions added to the existing state machine, scoped via a `taskTypeIsFairHearing` guard; a `fair_hearing` SLA type with the 90-day deadline in `workflow-sla-types.yaml`; and assignment rules routing to the appropriate queue. No new object type or separate state machine needed. Depends on issue #193 (task type as lifecycle discriminator). |
-| Change of circumstance handling | When household composition, income, or program status changes mid-case, associated tasks are automatically created or updated (Curam, Pega) | **Not in scope** — cross-domain event wiring (planned, see [Cross-domain event wiring](#cross-domain-event-wiring)) is the blueprint's mechanism for this. States configure which domain events trigger which task types via event wiring rules — the program-specific mapping is configuration, not a workflow contract gap. |
+| Change of circumstance handling | When household composition, income, or program status changes mid-case, associated tasks are automatically created or updated (Curam, Pega) | **Not in scope** — cross-domain event wiring (planned, see issue #163) is the blueprint's mechanism for this. States configure which domain events trigger which task types via event wiring rules — the program-specific mapping is configuration, not a workflow contract gap. |
 | Overpayment / recoupment tracking | Tracking and recovering benefits paid in error, including repayment schedules and federal reporting (Curam, Pega) | **Not in scope** — financial recoupment is a case management or financial domain concern, not workflow. |
 
 ---

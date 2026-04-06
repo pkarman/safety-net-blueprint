@@ -52,10 +52,10 @@ See [Metrics](workflow-design-rationale.md#metrics) in the design reference for 
 The baseline contracts are a starting point. States customize via overlays:
 
 - **State machine**: add transitions, extend guards, add effects to existing transitions
-- **Multiple lifecycles**: add task-type-specific states and transitions scoped via `taskType` guards to support multiple lifecycles within the same domain (e.g., fair hearing tasks alongside standard casework tasks) — see issue #193
+- **Multiple lifecycles**: add task-type-specific states and transitions scoped via `taskType` guards to support multiple lifecycles within the same domain (e.g., fair hearing tasks alongside standard casework tasks)
 - **Rules**: replace `workflow-rules.yaml` entirely with state-specific assignment and priority logic
-- **SLA types**: replace or extend `workflow-sla-types.yaml` with state-specific deadlines and pause conditions (overlay support: issue #174)
-- **Metrics**: replace or extend `workflow-metrics.yaml` with state-specific metrics and targets (overlay support: issue #174)
+- **SLA types**: replace or extend `workflow-sla-types.yaml` with state-specific deadlines and pause conditions
+- **Metrics**: replace or extend `workflow-metrics.yaml` with state-specific metrics and targets
 
 See the [State Overlays Guide](../../guides/state-overlays.md) for overlay mechanics.
 
