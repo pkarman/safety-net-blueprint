@@ -472,7 +472,7 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 
 | Capability | Industry standard | Blueprint status |
 |---|---|---|
-| Polymorphic subject association | Tasks linked to any domain entity (application, case, document, appointment) rather than entity-specific FK fields (Pega, ServiceNow, Curam) | **Planned** — a `subjectId`/`subjectType` pair on Task allows linking to any domain entity without adding a new FK field per domain. See issue #177. |
+| Task-to-record linkage | Tasks associated with the case, application, or entity they are about — enabling cross-domain queries like "show all tasks for this case" (JSM, ServiceNow, Curam, Pega) | **Planned** — current model uses entity-specific FK fields (e.g., `caseId`). A `subjectId`/`subjectType` pair would allow tasks to link to any domain entity without schema changes per domain. See issue #177. |
 | Task type differentiation by program | Different programs (SNAP, Medicaid, TANF) have different task schemas, required fields, and workflows (Curam, Pega, Appian, ServiceNow) | **Planned** — a `taskType` field with overlay-definable values lets states add program-specific metadata without fighting the shared schema. Not a full discriminator, but closes the gap for most cases. See issue #193. |
 | Task checklists / sub-items | Required steps or document checklists within a task (ServiceNow, Appian, JSM) | **Not in scope** for the baseline — could be modeled as sub-tasks or a `checklist` field in an overlay. |
 | Task templates | Pre-defined task configurations for recurring work types (ServiceNow, JSM, Pega, Appian) | **Not in scope** for the baseline — standard task creation via the API is the only creation path. |
