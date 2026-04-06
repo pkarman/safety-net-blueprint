@@ -391,7 +391,7 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 | Pull routing / Get Next Work | Worker requests their next best assignment; system selects based on urgency, skills, and availability (Pega Get Next Work) | **Planned** — `POST /workflow/queues/{id}/claim-next` atomically selects and claims the highest-priority eligible task for the caller. Selection criteria driven by existing priority rules (overlay point). Fires the existing `claim` transition — same guards, effects, and domain event. Atomic operation avoids the race condition of separate query + claim. See issue #196. |
 | Delegation / out-of-office routing | When a caseworker is unavailable, tasks automatically redirect to a substitute or back to the queue (JSM, ServiceNow, Pega, Appian, Salesforce) | **Planned** — needs a contract point (e.g., a `delegateToId` field on the worker entity, or an `auto-reassign` rule trigger on queue entry). Without it, every state invents its own absence-coverage mechanism. See issue #188. |
 | Overflow routing | When a queue exceeds capacity, tasks overflow to a backup queue (JSM, ServiceNow, Pega) | **Adapter layer** — a Queue `overflowQueueId` attribute is reasonable but high-volume routing logic is an adapter concern. |
-| Bulk reassignment | Supervisor reassigns multiple tasks at once (JSM, ServiceNow, Curam) | **Not in scope** — likely a separate supervisor batch API outside the state machine. |
+| Bulk reassignment | Supervisor reassigns multiple tasks at once (JSM, ServiceNow, Curam) | **Planned** — a supervisor batch API in the workflow domain, outside the state machine. Applies the same `assign`/`set-priority` guards and effects as individual transitions. See issue #183. |
 
 ### SLA and deadline management
 
@@ -402,7 +402,7 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 | SLA retroactive recalculation | When task attributes change after creation (e.g., `isExpedited` is set), SLA deadlines are recalculated accordingly (ServiceNow, Pega, Curam) | **Planned** — `onUpdate` already fires when `isExpedited` changes, but SLA deadline recalculation on that trigger is unspecified. The hook exists; the behavior it should produce is not yet declared. See issue #191. |
 | Deadline extensions | Formal process for extending a deadline with documented justification (ServiceNow, Curam, Pega) | **Planned** — an `extend-deadline` transition with a required justification field and an audit event is a natural contract artifact; without it, states change `slaDeadline` directly with no audit trail. See issue #192. |
 | Grace period handling | A defined window after the deadline before adverse action is taken — common in SNAP and Medicaid processing | **Planned** — a baseline `auto-adverse-action` timer transition with `after: 0d` (no grace period) makes the capability discoverable and creates an explicit overlay point. States override the duration to their required window. Distinct from `auto-escalate-sla-breach` (escalates at deadline) — adverse action fires after the grace period and takes the consequential action. See issue #197. |
-| SLA breach event | Distinct escalation or event at the deadline moment | **Pending** — PR #185 adds `auto-escalate-sla-breach` timer. |
+| SLA breach event | Distinct escalation or event at the deadline moment | **Planned** — `auto-escalate-sla-breach` timer transition fires at the deadline moment, distinct from the -48h warning. See issue #170. |
 
 ### Task structure and types
 
