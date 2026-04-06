@@ -214,7 +214,7 @@ Routing logic — which queue a task goes to, what priority it gets — varies e
   | Priority rules | Priority field automation | SLA-based priority | — | — | Urgency (1–100); SLA milestone-driven escalation | Process HQ KPI-based; no dedicated priority rule |
   | Rule order | First matching automation | Rule processing order | — | — | Router activity scripts; decision tree precedence | Rule number precedence (lower = higher priority) |
 
-- **Pega supports both push routing (system assigns) and pull routing (Get Next Work algorithm).** Pull routing presents the next best assignment to a worker based on urgency, availability, and skills — the worker requests work rather than having it assigned. The blueprint uses push routing only; pull routing is a future consideration for caseworker queue management. Appian's Automated Case Routing module explicitly names its strategies (round-robin, workload balance, shared queue), which is the same model as the `routingStrategy` field planned for the Queue entity (issue #162) — confirming that named strategies are the industry-standard approach.
+- **Pega supports both push routing (system assigns) and pull routing (Get Next Work algorithm).** Pull routing presents the next best assignment to a worker based on urgency, availability, and skills — the worker requests work rather than having it assigned. The blueprint uses push routing only; pull routing is a future consideration for caseworker queue management. Appian's Automated Case Routing module explicitly names its strategies (round-robin, workload balance, shared queue), which is the same model as the `routingStrategy` field planned for the Queue entity — confirming that named strategies are the industry-standard approach.
 - **Rules use `first-match-wins` evaluation — simple, predictable, and easy to debug.** Rules are evaluated in order and the first match wins. States that need more complex routing (e.g., weighted load balancing) can implement that as a rule action.
 - **Rules are invoked via `evaluate-rules` effects in the state machine — not embedded in rule definitions.** The state machine declares when rules run; the rules engine decides what happens. Neither system needs to understand the other's internals.
 - **`escalate` uses `evaluate-rules: priority`, not `set priority: high`.** Hardcoding a priority value would break states with different escalation behavior per program. `evaluate-rules: priority` delegates the decision to the rules engine, which can apply different priority logic for expedited vs. standard cases. This is especially important in benefits processing, where SNAP expedited and standard cases have different deadline profiles.
@@ -290,10 +290,10 @@ Federal regulations impose strict processing deadlines on benefits applications.
 - **`pauseWhen` / `resumeWhen` use JSON Logic conditions per SLA type — not a hardcoded list of states.** Different SLA types can have different pause behavior on the same state. A state might pause `snap_standard` but not `snap_expedited` during `awaiting_client` (the 7-day clock continues running). States can override pause behavior without modifying the state machine. ServiceNow's on-hold conditions work the same way.
 - **The SLA clock is paused, not stopped, during `awaiting_client` — preserving the original deadline rather than granting a fresh one.** Federal SNAP regulations treat client-caused delays as excluded time. `pauseWhen` pauses rather than stops the clock, resuming from the same point. Stopping would grant a fresh deadline on each block/resume cycle, distorting federal reporting. JSM and ServiceNow default to the same behavior.
 - **Warning thresholds are a percentage of the total SLA duration, not a fixed offset.** 75% of 7 days ≈ 5.25 days elapsed; 75% of 90 days = 67.5 days elapsed. A fixed 2-day offset would feel identical regardless of deadline length. ServiceNow uses the same percentage model on SLA Definitions.
-- **`slaTypeCode` is an untyped string in the base contract — the valid enum is injected from `*-sla-types.yaml` at build time.** Hardcoding valid SLA type codes in the base OpenAPI spec would conflict with state overlays that add or replace types. The resolve pipeline will inject the correct enum at build time (issue #175).
+- **`slaTypeCode` is an untyped string in the base contract — the valid enum is injected from `*-sla-types.yaml` at build time.** Hardcoding valid SLA type codes in the base OpenAPI spec would conflict with state overlays that add or replace types. The resolve pipeline injects the correct enum at build time.
 
 **Customization points:**
-- States will replace or extend SLA types via overlay once issue #174 lands.
+- States can replace or extend SLA types via overlay.
 - `pauseWhen` conditions can be tightened or loosened per regulatory interpretation — some states treat `awaiting_client` as the client's time to spend (stopping rather than pausing the clock) and can express that without touching the state machine.
 - `autoAssignWhen` logic can be adjusted to match state-specific program routing criteria (e.g., attach `snap_expedited` when household income is below the expedited threshold, not just when `isExpedited` is set).
 
@@ -358,7 +358,7 @@ States and federal partners need operational visibility into queue health, proce
 - **Pre-aggregation is an adapter-layer performance optimization, not a contract concern.** ServiceNow and JSM pre-aggregate metrics on a schedule for performance. For the blueprint's use case (development mock, contract definition), on-demand computation from live data is simpler, always current, and avoids a separate aggregation pipeline. States building production implementations will add pre-aggregation in their adapters — the metric definitions remain the same; only the computation strategy changes.
 
 **Customization points:**
-- States will replace or extend `workflow-metrics.yaml` via overlay once issue #174 lands.
+- States can replace or extend `workflow-metrics.yaml` via overlay.
 - `targets` can be overridden to reflect state-specific performance goals.
 - New metrics can be added for state-specific programs or reporting requirements.
 
@@ -440,12 +440,6 @@ Status values: **Planned** = on the roadmap with a tracking issue; **Partial** =
 | Fair hearing / appeals tracking | Dedicated workflow for applicant appeals with hearing date scheduling, statutory deadlines (90-day rule), and outcome tracking (Curam, Pega, ServiceNow) | **Planned** — the design path is clear: fair hearing states and transitions added to the existing state machine, scoped via a `taskTypeIsFairHearing` guard; a `fair_hearing` SLA type with the 90-day deadline in `workflow-sla-types.yaml`; and assignment rules routing to the appropriate queue. No new object type or separate state machine needed. Depends on issue #193 (task type as lifecycle discriminator). |
 | Change of circumstance handling | When household composition, income, or program status changes mid-case, associated tasks are automatically created or updated (Curam, Pega) | **Not in scope** — cross-domain event wiring (planned, see [Cross-domain event wiring](#cross-domain-event-wiring)) is the blueprint's mechanism for this. States configure which domain events trigger which task types via event wiring rules — the program-specific mapping is configuration, not a workflow contract gap. |
 | Overpayment / recoupment tracking | Tracking and recovering benefits paid in error, including repayment schedules and federal reporting (Curam, Pega) | **Not in scope** — financial recoupment is a case management or financial domain concern, not workflow. |
-
-### Customization
-
-| Capability | Industry standard | Blueprint status |
-|---|---|---|
-| Overlay support for behavioral YAMLs | N/A (no analogous open standard; customization in commercial platforms is GUI-based) | **Planned** — states cannot yet overlay `*-sla-types.yaml`, `*-metrics.yaml`, or `*-state-machine.yaml`. See issue #174. |
 
 ---
 
