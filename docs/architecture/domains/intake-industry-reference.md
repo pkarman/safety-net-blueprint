@@ -278,8 +278,8 @@ Quick reference — each decision is detailed in the section below.
 |---|---|---|---|
 | 1 | Role vs. relationship on ApplicationMember | **Decided: B** | A single field can't represent a member who is both an authorized representative and a family member, or a non-applying member who has a family relationship but no application-process role. No major vendor conflates these. |
 | 2 | Programs applied for — placement | **Decided: C** | Application-level alone can't distinguish voluntary non-application from ineligibility — the eligibility engine can exclude ineligible members using rules, but has no record of a member who opted out. Both levels makes intent explicit at intake and gives eligibility a clean input. |
-| 3 | Program-specific eligibility attributes — structure | **Open** | |
-| 4 | Authorized representative — modeling | **Open** | |
+| 3 | Program-specific eligibility attributes — structure | **Decided: A** | These are facts about the person, not the program — the same citizenship status is evaluated independently by each program's rules. No major vendor nests them per-program at intake. |
+| 4 | Authorized representative — modeling | **Decided: C** | A `roles` array on ApplicationMember (rather than a single role value) allows a member to hold both `household_member` and `authorized_representative` simultaneously, supporting Medicaid's less restrictive rules while accurately representing SNAP's non-household-member requirement — the authorized rep's roles array simply omits `household_member`. No separate entity needed. |
 | 5 | Domain events — scope | **Open** | |
 | 6 | Event type naming convention | **Open** | |
 | 7 | Application → Case handoff | **Open** | |
@@ -333,7 +333,7 @@ Quick reference — each decision is detailed in the section below.
 
 ### Decision 3: Program-specific eligibility attributes — structure
 
-**Status:** Open
+**Status:** Decided: A
 
 **What's being decided:** Whether eligibility-relevant attributes (citizenship, immigration status, pregnancy, student status, disability) are flat fields on ApplicationMember or nested inside a per-program structure.
 
@@ -344,7 +344,7 @@ Quick reference — each decision is detailed in the section below.
 - The one genuinely per-program attribute is which programs the member is applying for — handled separately in Decision 2
 
 **Options:**
-- **(A)** Flat on ApplicationMember — citizenship, immigration status, pregnancy, student status, disability as direct fields; consistent with all major vendors
+- **(A)** ✓ Flat on ApplicationMember — citizenship, immigration status, pregnancy, student status, disability as direct fields; consistent with all major vendors
 - **(B)** Per-program nested — each program entry on the member has its own sub-object with program-specific fields
 - **(C)** Hybrid — flat for shared person facts, per-program only for attributes that are genuinely program-specific (e.g., work registration exemption reason, which has different rules per program)
 
@@ -352,19 +352,20 @@ Quick reference — each decision is detailed in the section below.
 
 ### Decision 4: Authorized representative — modeling
 
-**Status:** Open
+**Status:** Decided: C
 
 **What's being decided:** Whether the authorized representative is a role on an ApplicationMember record or a separate reference from the Application entity.
 
 **Considerations:**
 - Salesforce and Cúram both model the authorized representative as a role on the member junction record — no separate entity. Pega uses a separate reference from the Application to a person record.
-- SNAP regulations (7 CFR § 273.2(n)) require the authorized representative to be a non-household-member — modeling them as a role on `ApplicationMember` is conceptually imprecise for SNAP: they are not a member
-- Medicaid (42 CFR § 435.923) is less restrictive — a household member could act as authorized representative for Medicaid purposes
-- If the authorized rep is typically an external party (CBO worker, social worker, attorney), a separate reference from Application is more accurate; if they are always represented elsewhere in the application data, role-on-member is simpler
+- SNAP regulations (7 CFR § 273.2(n)) require the authorized representative to be a non-household-member — modeling them as a single role on `ApplicationMember` is conceptually imprecise: they are not a member
+- Medicaid (42 CFR § 435.923) is less restrictive — a household member could act as authorized representative for Medicaid purposes, meaning the same person legitimately holds two roles
+- A `roles` array resolves both: a SNAP authorized rep is an ApplicationMember with `roles: [authorized_representative]` only; a Medicaid authorized rep who lives in the household has `roles: [household_member, authorized_representative]`
 
 **Options:**
-- **(A)** Role on ApplicationMember (`role: authorized_representative`) — consistent with Salesforce and Cúram; simpler; conceptually imprecise for SNAP
-- **(B)** Separate reference on Application pointing to a person record — consistent with Pega; more accurate for SNAP's non-household-member requirement; adds a separate relationship to manage
+- **(A)** Single `role` value on ApplicationMember (`role: authorized_representative`) — consistent with Salesforce and Cúram; simpler; conceptually imprecise for SNAP
+- **(B)** Separate reference on Application pointing to a person record — consistent with Pega; accurate for SNAP's non-household-member requirement; adds a separate relationship to manage
+- **(C)** ✓ `roles` array on ApplicationMember — keeps the authorized rep as a member record (no separate entity); allows multiple simultaneous roles; accurately represents both SNAP (non-household-member has no `household_member` role) and Medicaid (household member can hold both roles)
 
 ---
 
