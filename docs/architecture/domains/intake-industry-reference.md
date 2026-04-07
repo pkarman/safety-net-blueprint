@@ -412,9 +412,10 @@ Quick reference — each decision is detailed in the section below.
 **What's being decided:** When and how an approved application creates a Case in the case management domain — what triggers it, what data carries over, and which domain is responsible for creating the Case.
 
 **Considerations:**
-- In all major vendors (Cúram, Salesforce, Pega), case creation is triggered internally within a single system — not across a domain boundary. The blueprint's explicit domain separation makes this a question vendors don't face.
-- The full intake record (members, income, expenses, assets, programs approved) must be accessible to case management
-- Timing question: does a case get created on approval of any one program, or after all programs in a multi-program application are determined?
+- All major vendors have a clear logical handoff from intake to case management (Cúram: `ApplicationCase` → `ProductDeliveryCase`; Salesforce: `IndividualApplication` → `BenefitAssignment`; Pega: Application Request case → program delivery sub-cases). Because these happen within a single system, the mechanism is implicit — an internal method call or trigger — rather than an explicit contract. The blueprint makes this handoff explicit and requires a deliberate design.
+- The triggering event matters: is it the intake domain signaling it's done, or the eligibility domain signaling a determination was made? These are different moments — an application could be closed without an approval (withdrawn, denied).
+- The full intake record (members, income, expenses, assets, programs approved) must be accessible to case management.
+- Timing: does a case get created on approval of any one program, or after all programs in a multi-program application are determined?
 
 **Options:**
 - **(A)** Intake domain emits `application.closed`; case management subscribes and creates a Case
