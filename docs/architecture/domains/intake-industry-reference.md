@@ -411,10 +411,25 @@ Quick reference — each decision is detailed in the section below.
 **What's being decided:** Whether the application record has an explicit lifecycle state signaling that data collection is complete and it is ready for eligibility determination, or whether the application record stays open until the eligibility domain closes it.
 
 **Considerations:**
-- Cúram uses a fluid boundary — the application case stays open throughout eligibility review with no explicit "submitted for determination" state. Pega uses an explicit stage advance — the caseworker moves the case from Intake to Eligibility stage. Salesforce has no distinct intermediate state between `Under Review` and a final determination.
-- A `pending_determination` state makes the domain boundary explicit — the caseworker signals when intake is complete; the eligibility domain subscribes and begins its work
-- Without an explicit state, intake and eligibility overlap during `under_review`, making domain ownership harder to reason about and harder to independently scale or replace either domain
-- The end of intake is determined by the caseworker's judgment, not a timer — any explicit state requires a caseworker action to trigger it, which adds a step
+
+Regulatory factors:
+- Federal processing clocks (30 days for SNAP, 45 days for Medicaid) start at **submission**, not at "intake complete" — neither option creates a compliance problem on its own
+- SNAP requires an interview before determination (7 CFR § 273.2(e)); the interview is part of intake. An explicit `pending_determination` state could naturally signal that the interview is done — a regulatorily meaningful moment useful for audit trails
+- Federal quality control reviews (SNAP, Medicaid) audit application processing timeliness; an explicit state gives a clean timestamp for when the caseworker considered intake complete
+- SNAP expedited screening (7 CFR § 273.2(i)) runs on a 7-day clock that starts at submission — it can proceed before intake is formally complete. This might seem to conflict with a hard handoff state, but expedited screening happens *during* intake, not after it, so the two don't actually conflict
+
+Arguments for an explicit `pending_determination` state:
+- Gives the eligibility domain an unambiguous trigger — without it, the eligibility domain must guess when to start (at `under_review`? after the interview? after documents are received?)
+- Creates caseworker accountability — an application can't drift in `under_review` indefinitely without a deliberate action to advance it
+- Provides a clean performance metric timestamp: when did intake finish, separate from when determination was made
+- Enables workflow routing to a different queue or role (eligibility specialists vs. intake caseworkers) at a clearly defined handoff point
+- Provides a natural trigger for external eligibility engines that need an explicit API call or event to begin
+
+Arguments for a fluid boundary:
+- Cúram uses a fluid boundary; Salesforce has no distinct intermediate state. Pega's explicit stage advance is the outlier.
+- Multi-program applications create ambiguity: intake may be complete for SNAP before Medicaid verification is done — which program does `pending_determination` signal?
+- Verification timing: if the application is awaiting a third-party verification response, it's unclear whether it should be `under_review` or `pending_determination`
+- Adding a state adds a transition to manage and a caseworker step to take
 
 **Options:**
 - **(A)** No explicit end state — application `closed` when the eligibility domain closes it; fluid boundary similar to Cúram
