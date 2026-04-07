@@ -276,21 +276,21 @@ Quick reference — each decision is detailed in the section below.
 
 | # | Decision | Status | Rationale |
 |---|---|---|---|
-| 1 | Role vs. relationship on ApplicationMember | **Decided: B** | A single field can't represent a member who is both an authorized representative and a family member, or a non-applying member who has a family relationship but no application-process role. No major vendor conflates these. |
-| 2 | Programs applied for — placement | **Decided: C** | Application-level alone can't distinguish voluntary non-application from ineligibility — the eligibility engine can exclude ineligible members using rules, but has no record of a member who opted out. Both levels makes intent explicit at intake and gives eligibility a clean input. |
-| 3 | Program-specific eligibility attributes — structure | **Decided: A** | These are facts about the person, not the program — the same citizenship status is evaluated independently by each program's rules. No major vendor nests them per-program at intake. |
-| 4 | Authorized representative — modeling | **Decided: C** | A `roles` array on ApplicationMember (rather than a single role value) allows a member to hold both `household_member` and `authorized_representative` simultaneously, supporting Medicaid's less restrictive rules while accurately representing SNAP's non-household-member requirement — the authorized rep's roles array simply omits `household_member`. No separate entity needed. |
-| 5 | Domain events — scope | **Decided: publish as needed** | Both transition and data mutation events are supported. Which specific events to emit is determined per-domain based on integration needs. Schema evolution practices (additive-only payloads, type versioning, canonical schemas in OpenAPI components) govern how events are added over time. |
-| 6 | Event envelope format | **Decided: A** | CloudEvents 1.0 is transport-agnostic, natively supported by AWS/Azure/GCP, and AsyncAPI-compatible. The envelope schema will be defined in OpenAPI components so it is overlayable and reusable across all domains. |
-| 7 | Application → Case handoff | **Open** | |
-| 8 | Intake phase end — lifecycle state | **Open** | |
-| 9 | Application data mutability and audit trail | **Open** | |
-| 10 | submitted → under_review transition trigger | **Open** | |
-| 11 | Event type naming convention | **Open** | |
-| 12 | Member-to-member relationship matrix (MAGI) | **Open** | |
-| 13 | Person identity matching | **Open** | |
-| 14 | Income and expense detail at intake | **Open** | |
-| 15 | MAGI tax filing status fields | **Open** | |
+| 1 | [Role vs. relationship on ApplicationMember](#decision-1-role-vs-relationship-on-applicationmember) | **Decided: B** | A single field can't represent a member who is both an authorized representative and a family member, or a non-applying member who has a family relationship but no application-process role. No major vendor conflates these. |
+| 2 | [Programs applied for — placement](#decision-2-programs-applied-for--placement) | **Decided: C** | Application-level alone can't distinguish voluntary non-application from ineligibility — the eligibility engine can exclude ineligible members using rules, but has no record of a member who opted out. Both levels makes intent explicit at intake and gives eligibility a clean input. |
+| 3 | [Program-specific eligibility attributes — structure](#decision-3-program-specific-eligibility-attributes--structure) | **Decided: A** | These are facts about the person, not the program — the same citizenship status is evaluated independently by each program's rules. No major vendor nests them per-program at intake. |
+| 4 | [Authorized representative — modeling](#decision-4-authorized-representative--modeling) | **Decided: C** | A `roles` array on ApplicationMember (rather than a single role value) allows a member to hold both `household_member` and `authorized_representative` simultaneously, supporting Medicaid's less restrictive rules while accurately representing SNAP's non-household-member requirement — the authorized rep's roles array simply omits `household_member`. No separate entity needed. |
+| 5 | [Domain events — scope](#decision-5-domain-events--scope) | **Decided: publish as needed** | Both transition and data mutation events are supported. Which specific events to emit is determined per-domain based on integration needs. Schema evolution practices (additive-only payloads, type versioning, canonical schemas in OpenAPI components) govern how events are added over time. |
+| 6 | [Event envelope format](#decision-6-event-envelope-format) | **Decided: A** | CloudEvents 1.0 is transport-agnostic, natively supported by AWS/Azure/GCP, and AsyncAPI-compatible. The envelope schema will be defined in OpenAPI components so it is overlayable and reusable across all domains. |
+| 7 | [Application → Case handoff](#decision-7-application--case-handoff) | **Open** | |
+| 8 | [Intake phase end — lifecycle state](#decision-8-intake-phase-end--lifecycle-state) | **Open** | |
+| 9 | [Application data mutability and audit trail](#decision-9-application-data-mutability-and-audit-trail) | **Open** | |
+| 10 | [submitted → under_review transition trigger](#decision-10-submitted--under_review-transition-trigger) | **Open** | |
+| 11 | [Event type naming convention](#decision-11-event-type-naming-convention) | **Open** | |
+| 12 | [Member-to-member relationship matrix (MAGI)](#decision-12-member-to-member-relationship-matrix-magi) | **Open** | |
+| 13 | [Person identity matching](#decision-13-person-identity-matching) | **Open** | |
+| 14 | [Income and expense detail at intake](#decision-14-income-and-expense-detail-at-intake) | **Open** | |
+| 15 | [MAGI tax filing status fields](#decision-15-magi-tax-filing-status-fields) | **Open** | |
 
 ---
 
