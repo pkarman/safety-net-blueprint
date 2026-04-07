@@ -408,7 +408,7 @@ Quick reference — each decision is detailed in the section below.
 
 **Status:** Open
 
-**What's being decided:** Whether the intake domain has an explicit lifecycle state signaling that data collection is complete and the application is ready for eligibility determination, or whether the intake domain stays open until the eligibility domain closes it.
+**What's being decided:** Whether the application record has an explicit lifecycle state signaling that data collection is complete and it is ready for eligibility determination, or whether the application record stays open until the eligibility domain closes it.
 
 **Considerations:**
 - Cúram uses a fluid boundary — the application case stays open throughout eligibility review with no explicit "submitted for determination" state. Pega uses an explicit stage advance — the caseworker moves the case from Intake to Eligibility stage. Salesforce has no distinct intermediate state between `Under Review` and a final determination.
@@ -417,7 +417,7 @@ Quick reference — each decision is detailed in the section below.
 - The end of intake is determined by the caseworker's judgment, not a timer — any explicit state requires a caseworker action to trigger it, which adds a step
 
 **Options:**
-- **(A)** No explicit end state — intake `closed` when the eligibility domain closes it; fluid boundary similar to Cúram
+- **(A)** No explicit end state — application `closed` when the eligibility domain closes it; fluid boundary similar to Cúram
 - **(B)** Explicit `pending_determination` state — caseworker transitions the application when data collection is complete; intake emits `application.submitted_for_determination`; eligibility domain owns everything after
 
 ---
