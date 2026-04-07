@@ -408,32 +408,32 @@ Quick reference — each decision is detailed in the section below.
 
 **Status:** Open
 
-**What's being decided:** Whether the application record has an explicit lifecycle state signaling that data collection is complete and it is ready for eligibility determination, or whether the application record stays open until the eligibility domain closes it.
+**What's being decided:** Whether the caseworker's completion of intake review is signaled by a lifecycle state change, a domain event, or not at all — and how the application record reaches its terminal state without coupling intake to the eligibility domain.
 
 **Considerations:**
 
 Regulatory factors:
 - Federal processing clocks (30 days for SNAP, 45 days for Medicaid) start at **submission**, not at "intake complete" — neither option creates a compliance problem on its own
-- SNAP requires an interview before determination (7 CFR § 273.2(e)); the interview is part of intake. An explicit `pending_determination` state could naturally signal that the interview is done — a regulatorily meaningful moment useful for audit trails
-- Federal quality control reviews (SNAP, Medicaid) audit application processing timeliness; an explicit state gives a clean timestamp for when the caseworker considered intake complete
-- SNAP expedited screening (7 CFR § 273.2(i)) runs on a 7-day clock that starts at submission — it can proceed before intake is formally complete. This might seem to conflict with a hard handoff state, but expedited screening happens *during* intake, not after it, so the two don't actually conflict
+- SNAP requires an interview before determination (7 CFR § 273.2(e)); the interview is part of intake — the caseworker's completion signal is a natural point to record that the interview occurred
+- Federal quality control reviews (SNAP, Medicaid) audit application processing timeliness; a clean timestamp for when the caseworker considered intake complete aids QC reporting
+- SNAP expedited screening (7 CFR § 273.2(i)) runs on a 7-day clock starting at submission — it proceeds during intake, not after, so it doesn't conflict with any of these options
 
-Arguments for an explicit `pending_determination` state:
-- Gives the eligibility domain an unambiguous trigger — without it, the eligibility domain must guess when to start (at `under_review`? after the interview? after documents are received?)
-- Creates caseworker accountability — an application can't drift in `under_review` indefinitely without a deliberate action to advance it
-- Provides a clean performance metric timestamp: when did intake finish, separate from when determination was made
-- Enables workflow routing to a different queue or role (eligibility specialists vs. intake caseworkers) at a clearly defined handoff point
-- Provides a natural trigger for external eligibility engines that need an explicit API call or event to begin
+Domain ownership:
+- Each domain should own its own state transitions. Having the eligibility domain directly close the application creates coupling — intake's lifecycle would be controlled by another domain.
+- The cleaner model: intake subscribes to eligibility events and decides when the application is done based on its own logic (e.g., all programs determined → `closed`). Eligibility publishes what it knows; intake decides what "done" means.
+- A `pending_determination` state implies eligibility can't begin until intake signals it's ready — but eligibility could reasonably begin earlier for some programs, and expedited screening already does
 
-Arguments for a fluid boundary:
-- Cúram uses a fluid boundary; Salesforce has no distinct intermediate state. Pega's explicit stage advance is the outlier.
-- Multi-program applications create ambiguity: intake may be complete for SNAP before Medicaid verification is done — which program does `pending_determination` signal?
-- Verification timing: if the application is awaiting a third-party verification response, it's unclear whether it should be `under_review` or `pending_determination`
-- Adding a state adds a transition to manage and a caseworker step to take
+Arguments for an explicit state (`pending_determination`):
+- Adds a transition to manage and a caseworker step; creates multi-program ambiguity (complete for SNAP but still awaiting Medicaid verification?)
+
+Arguments for a caseworker-triggered event with no new state:
+- The caseworker's completion is a meaningful signal regardless of what the application's lifecycle state is; downstream systems subscribe if relevant
+- No new state to manage; the application stays `under_review` until intake's own logic closes it based on eligibility events received
 
 **Options:**
-- **(A)** No explicit end state — application `closed` when the eligibility domain closes it; fluid boundary similar to Cúram
-- **(B)** Explicit `pending_determination` state — caseworker transitions the application when data collection is complete; intake emits `application.submitted_for_determination`; eligibility domain owns everything after
+- **(A)** No explicit signal — application moves to `closed` when intake's logic determines all programs are resolved; fluid boundary similar to Cúram
+- **(B)** Explicit `pending_determination` state — caseworker transitions the application; intake emits `application.review_completed`; adds a state and a step
+- **(C)** Caseworker-triggered event, no new state — caseworker action emits `application.review_completed` while the application stays `under_review`; intake subscribes to eligibility events and closes the application when all programs are determined; each domain owns its own state transitions
 
 ---
 
