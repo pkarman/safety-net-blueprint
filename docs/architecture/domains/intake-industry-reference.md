@@ -281,7 +281,7 @@ Quick reference — each decision is detailed in the section below.
 | 3 | Program-specific eligibility attributes — structure | **Decided: A** | These are facts about the person, not the program — the same citizenship status is evaluated independently by each program's rules. No major vendor nests them per-program at intake. |
 | 4 | Authorized representative — modeling | **Decided: C** | A `roles` array on ApplicationMember (rather than a single role value) allows a member to hold both `household_member` and `authorized_representative` simultaneously, supporting Medicaid's less restrictive rules while accurately representing SNAP's non-household-member requirement — the authorized rep's roles array simply omits `household_member`. No separate entity needed. |
 | 5 | Domain events — scope | **Decided: publish as needed** | Both transition and data mutation events are supported. Which specific events to emit is determined per-domain based on integration needs. Schema evolution practices (additive-only payloads, type versioning, canonical schemas in OpenAPI components) govern how events are added over time. |
-| 6 | Event envelope format | **Open** | |
+| 6 | Event envelope format | **Decided: A** | CloudEvents 1.0 is transport-agnostic, natively supported by AWS/Azure/GCP, and AsyncAPI-compatible. The envelope schema will be defined in OpenAPI components so it is overlayable and reusable across all domains. |
 | 7 | Application → Case handoff | **Open** | |
 | 8 | Intake phase end — lifecycle state | **Open** | |
 | 9 | Application data mutability and audit trail | **Open** | |
@@ -387,7 +387,7 @@ Quick reference — each decision is detailed in the section below.
 
 ### Decision 6: Event envelope format
 
-**Status:** Open
+**Status:** Decided: A
 
 **What's being decided:** The standard wrapper format for all domain events — the envelope that carries event metadata (id, source, type, timestamp) around the event-specific payload.
 
@@ -399,7 +399,7 @@ Quick reference — each decision is detailed in the section below.
 - A custom envelope has no tooling ecosystem and creates migration cost if standards adoption grows
 
 **Options:**
-- **(A)** CloudEvents 1.0 — CNCF standard, transport-agnostic, cloud-native ecosystem support, AsyncAPI-compatible, SDKs in most languages
+- **(A)** ✓ CloudEvents 1.0 — CNCF standard, transport-agnostic, cloud-native ecosystem support, AsyncAPI-compatible, SDKs in most languages; envelope schema defined in OpenAPI components for reuse and overlayability
 - **(B)** Custom blueprint envelope — full control, no external dependency, no tooling ecosystem
 - **(C)** No standard envelope — each domain defines its own payload shape
 
