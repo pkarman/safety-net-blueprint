@@ -254,19 +254,19 @@ Events are listed with the operational or regulatory need that drives them — t
 
 ### Event envelope
 
-The event envelope format is an open design decision — see Decision 11. The leading candidate is [CloudEvents 1.0](https://cloudevents.io/), a CNCF standard that is transport-agnostic and compatible with AsyncAPI should that direction be pursued later. If adopted, the standard envelope fields would be:
+The adopted envelope format is [CloudEvents 1.0](https://cloudevents.io/) — see Decision 6. The envelope schema is defined in OpenAPI components for reuse and overlayability across all domains. Standard envelope fields:
 
 | Field | Description | Example |
 |---|---|---|
 | `specversion` | CloudEvents version | `"1.0"` |
 | `id` | Unique event ID | UUID |
 | `source` | Domain that emitted the event | `"/domains/intake"` |
-| `type` | Event type (naming convention TBD) | `"gov.safetynets.intake.application.submitted"` |
+| `type` | Event type | `"org.codeforamerica.safety-net-blueprint.intake.application.submitted"` |
 | `time` | ISO 8601 timestamp | `"2026-04-07T14:00:00Z"` |
 | `datacontenttype` | Payload format | `"application/json"` |
 | `data` | Event-specific payload | see catalog above |
 
-**Event type naming convention** is a separate open design decision — once consumers depend on it, renaming is a breaking change. See Decision 11.
+**Event type naming convention:** `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — see Decision 10.
 
 ---
 
@@ -288,8 +288,8 @@ Quick reference — each decision is detailed in the section below.
 | 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | **Decided: A** | Fully qualified type names are self-contained, collision-safe across organizations, and consistent with the CloudEvents community convention. Prefix is `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — e.g., `org.codeforamerica.safety-net-blueprint.intake.application.submitted`. |
 | 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Decided: A** | The `claimedAsDependentBy` and tax filing status fields cover the vast majority of MAGI household composition cases. The pairwise matrix only adds precision for the edge case where a non-primary adult is a parent of a child who isn't explicitly claimed as a dependent — that case is a known gap not covered by the baseline. |
 | 12 | [Person identity matching](#decision-12-person-identity-matching) | **Decided** | Identity matching is triggered at submission. The result is stored as `resolvedPersonId` on ApplicationMember. Whether the implementation is synchronous or asynchronous is left to the implementor — the contract is the same either way. |
-| 13 | [Income and expense detail at intake](#decision-13-income-and-expense-detail-at-intake) | **Open** | |
-| 14 | [MAGI tax filing status fields](#decision-14-magi-tax-filing-status-fields) | **Open** | |
+| 13 | [Income and expense detail at intake](#decision-13-income-and-expense-detail-at-intake) | **Decided: D** | Full income schema in the contract; only gross income required at submission (SNAP expedited screening minimum). All other detail is optional. Implementations decide how much the intake form collects — the contract does not constrain that choice. |
+| 14 | [MAGI tax filing status fields](#decision-14-magi-tax-filing-status-fields) | **Decided: A** | The tax filing status fields are required by the MAGI household composition logic decided in Decision 11. Omitting them from the baseline would leave that logic without the fields it depends on. Flat fields on ApplicationMember — consistent with MAGI-in-the-Cloud and CalSAWS. |
 
 ---
 
@@ -306,7 +306,7 @@ Quick reference — each decision is detailed in the section below.
 
 **Options:**
 - **(A)** Single `relationship` field encoding both application role and family relationship
-- **(B)** ✓ Separate `role` field (application process role: primary_applicant, household_member, non_applying_member, authorized_representative, absent_parent) and `relationship` field (family relationship to primary applicant: spouse, child, parent, etc.)
+- **(B)** ✓ Separate `role` field (application process role: primary_applicant, household_member, non_applying_member, authorized_representative, absent_parent) and `relationship` field (family relationship to primary applicant: spouse, child, parent, etc.). Note: Decision 4 extends this to a `roles` array to support multiple simultaneous roles.
 
 ---
 
@@ -533,7 +533,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ### Decision 13: Income and expense detail at intake
 
-**Status:** Open
+**Status:** Decided: D
 
 **What's being decided:** Whether the intake form collects full income and expense detail or a summary that is refined during caseworker review.
 
@@ -542,16 +542,21 @@ Arguments for a caseworker-triggered event with no new state:
 - SNAP expedited eligibility screening (7-day track) requires income information at filing — without at least a gross income figure, expedited screening cannot run immediately after submission
 - Full detail at intake is more burdensome for applicants — amounts, employer names, and frequencies may not be known at filing; applicants may estimate or leave blank
 - Summary-only intake reduces applicant burden but adds a caseworker data-entry step and depends on documents for completeness
+- The contract and the intake form are separate concerns — the schema can support full detail while allowing implementations to only require what they collect
 
 **Options:**
 - **(A)** Full detail at intake — income by source, employer, amount, frequency per person; expenses by type and amount; matches eligibility needs directly
 - **(B)** Summary only at intake — gross monthly income and total expense figures; detail collected during caseworker review or via verification
+- **(C)** Defer to state overlay — baseline schema omits income detail; states add fields to match their portal's collection strategy
+- **(D)** Full schema, configurable required fields — the contract defines the complete income schema (all fields for source, employer, amount, frequency, type) but only marks gross income as required at submission. All other fields are optional. Implementations decide how much the intake form collects; states with simplified portals leave detail for later; states with full-featured portals collect everything upfront. The contract is the same either way.
+
+**Decision:** Option D. The contract defines the full income schema with only gross income required at submission — the minimum needed for SNAP expedited screening. All additional detail (source, employer, frequency, type) is optional. Implementations decide how much to collect at intake; the contract does not constrain that choice.
 
 ---
 
 ### Decision 14: MAGI tax filing status fields
 
-**Status:** Open
+**Status:** Decided: A
 
 **What's being decided:** Whether MAGI Medicaid-specific tax filing status fields (`taxFilingStatus`, `claimedAsDependentBy`, `expectToFileTaxes`, `marriedFilingJointly`) are in the baseline ApplicationMember schema or added via overlay when Medicaid support is in scope.
 
@@ -560,11 +565,14 @@ Arguments for a caseworker-triggered event with no new state:
 - These fields are only needed when Medicaid eligibility is in scope — a SNAP-only implementation has no use for them
 - Baseline inclusion ensures any state adding Medicaid doesn't need to overlay the schema first — the fields are there and left empty for non-Medicaid cases
 - Omitting from baseline keeps the schema leaner, but risks states adding in inconsistent ways (different names, types, or structure) across implementations
+- The MAGI household composition logic from Decision 11 depends on `claimedAsDependentBy` and tax filing status fields — omitting them from the baseline would leave that logic without the fields it requires
 
 **Options:**
-- **(A)** Flat fields on ApplicationMember in the baseline — consistent with MAGI-in-the-Cloud; multi-program-ready out of the box; adds fields irrelevant to SNAP-only states
+- **(A)** Flat fields on ApplicationMember in the baseline — consistent with MAGI-in-the-Cloud and CalSAWS; multi-program-ready out of the box; adds fields irrelevant to SNAP-only states
 - **(B)** Separate `TaxFilingStatus` sub-entity on ApplicationMember in the baseline — consistent with Cúram; groups MAGI-specific fields; adds a sub-object irrelevant to SNAP-only states
 - **(C)** Omit from baseline — added via state overlay when Medicaid support is scoped; keeps baseline lean; risks inconsistent implementations across states
+
+**Decision:** Option A. The MAGI household composition approach (Decision 11) already depends on `claimedAsDependentBy` and tax filing status fields in the baseline. Flat fields on `ApplicationMember` are consistent with MAGI-in-the-Cloud and CalSAWS. States without Medicaid leave them empty.
 
 ---
 
