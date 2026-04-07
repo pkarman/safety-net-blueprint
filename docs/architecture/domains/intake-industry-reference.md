@@ -284,7 +284,7 @@ Quick reference — each decision is detailed in the section below.
 | 6 | [Event envelope format](#decision-6-event-envelope-format) | **Decided: A** | CloudEvents 1.0 is transport-agnostic, natively supported by AWS/Azure/GCP, and AsyncAPI-compatible. The envelope schema will be defined in OpenAPI components so it is overlayable and reusable across all domains. |
 | 7 | [Intake phase end — lifecycle state](#decision-7-intake-phase-end--lifecycle-state) | **Decided: C** | Domain autonomy: each domain owns its own state transitions. A `pending_determination` state would exist to serve a downstream domain's needs, not to represent meaningful business state in intake — an event handles that better. Intake signals what it knows (`review_completed`); eligibility publishes what it knows; intake closes the application based on its own logic. |
 | 8 | [Application data mutability and audit trail](#decision-8-application-data-mutability-and-audit-trail) | **Decided: C** | Audit logic should live once, not be duplicated in every domain. A cross-cutting audit domain subscribing to mutation events enables consistent version history across all domains and cross-domain queries. Mutation events must carry before/after field values or full snapshots to support version reconstruction. |
-| 9 | [submitted → under_review transition trigger](#decision-9-submitted--under_review-transition-trigger) | **Open** | |
+| 9 | [submitted → under_review transition trigger](#decision-9-submitted--under_review-transition-trigger) | **Decided: B** | Consistent with Decision 7: intake owns its own state transitions but reacts to events from other domains. Intake subscribes to `task.claimed` from the workflow domain and transitions the application to `under_review`. One caseworker action; intake handles the rest automatically. |
 | 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | **Open** | |
 | 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Open** | |
 | 12 | [Person identity matching](#decision-12-person-identity-matching) | **Open** | |
@@ -459,19 +459,19 @@ Arguments for a caseworker-triggered event with no new state:
 
 ### Decision 9: submitted → under_review transition trigger
 
-**Status:** Open
+**Status:** Decided: B
 
-**What's being decided:** Whether the `submitted → under_review` transition is triggered by an explicit intake domain action or driven by an event from the workflow domain when a caseworker claims the intake task.
+**What's being decided:** Whether the `submitted → under_review` transition is triggered by an explicit intake domain action or by intake subscribing to the workflow domain's `task.claimed` event.
 
 **Considerations:**
 - All major vendors handle this within a single system — the intake/case system and the task/workflow system are one; the cross-domain question doesn't arise. The blueprint separates them.
-- The workflow-driven approach (intake reacts to a task `claim` event) is more event-driven but means another domain partially controls intake's state
-- The explicit-action approach (caseworker calls the intake API to open the application) gives intake full ownership but requires an extra step
-- Assignment (routing to a queue) and opening (caseworker begins review) may be two distinct moments — see the lifecycle section
+- The event-driven approach is consistent with Decision 7: intake owns its own state transitions but reacts to events from other domains. Subscribing to `task.claimed` is not tight coupling — intake still decides to transition itself; the event is the trigger.
+- The explicit-action approach requires the caseworker (or the UI) to make two calls — claim the task in workflow, then separately open the application in intake. The event-driven approach reduces this to one caseworker action.
+- Assignment (routing to a queue) and opening (caseworker begins review) may be two distinct moments — the task `claim` event maps to opening, not just assignment
 
 **Options:**
-- **(A)** Explicit intake action — caseworker calls the intake domain API to open the application; intake owns the state change; consistent with how all major vendors handle this
-- **(B)** Workflow-driven — the workflow domain's task `claim` event triggers the intake domain to move to `under_review`; fewer steps, more event-driven, cross-domain coupling
+- **(A)** Explicit intake action — caseworker calls the intake domain API to open the application; intake owns the state change; requires an extra step
+- **(B)** ✓ Intake subscribes to `task.claimed` — intake reacts to the workflow event and transitions the application to `under_review`; one caseworker action; consistent with the event-driven pattern established in Decision 7
 
 ---
 
