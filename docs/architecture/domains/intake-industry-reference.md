@@ -272,73 +272,381 @@ The event envelope format is an open design decision — see Decision 11. The le
 
 ## Key design decisions
 
-| # | Decision | Options | Status |
-|---|---|---|---|
-| 1 | Role vs. relationship on ApplicationMember | (A) Single `relationship` field encoding both application role and family relationship; (B) Separate `role` field (application process role) and `relationship` field (family relationship to primary applicant) | **Open** |
-| 2 | Programs applied for — placement | (A) Application level only — one programs list on the Application; (B) Member level only — each ApplicationMember has a `programsApplyingFor` list; (C) Both — application has a programs list (household intent), member has a `programsApplyingFor` list (individual intent) | **Open** |
-| 3 | Program-specific eligibility attributes — structure | (A) Flat on ApplicationMember — citizenship, immigration status, pregnancy, etc. as direct fields; (B) Per-program nested — each program entry on the member has its own sub-object; (C) Hybrid — flat for shared person facts, per-program only for genuinely program-specific attributes | **Open** |
-| 4 | Authorized representative — modeling | (A) Role on ApplicationMember (`role: authorized_representative`) — consistent with Salesforce and Cúram; (B) Separate entity on Application — consistent with Pega | **Open** |
-| 5 | Domain events — scope | (A) Transition events only — events map 1:1 to lifecycle state changes; (B) Data mutation events too — events also emitted on significant data changes within a stable state | **Open** |
-| 6 | Event type naming convention | (A) `gov.safetynets.{domain}.{entity}.{verb}` (e.g., `gov.safetynets.intake.application.submitted`); (B) `{domain}.{entity}.{verb}` with `source` field providing the domain context | **Open** |
-| 7 | Application → Case handoff | When and how does an approved application create a Case in the case management domain? What event triggers it? What data is carried over? This is a cross-domain boundary decision affecting both intake and case management. | **Open** |
-| 8 | Intake phase end — lifecycle state | (A) No explicit end state — intake closes when the eligibility domain closes it (fluid boundary, similar to Cúram); (B) Explicit `pending_determination` state — intake emits an event and transitions to a terminal state when data collection is complete, signaling the eligibility domain to begin; the eligibility domain owns everything after | **Open** |
-| 9 | Application data mutability and audit trail | Application data is mutable during `under_review` as caseworkers correct and complete what the applicant submitted. (A) Track changes at the field level — each update records who changed what and when, distinguishing applicant-submitted vs. caseworker-corrected values; (B) Track changes at the submission level — each caseworker save creates a new version of the application record; (C) No explicit audit trail in the intake domain — changes are tracked in a separate audit/activity log owned by another domain | **Open** |
-| 10 | submitted → under_review transition trigger | (A) Explicit intake action — caseworker directly transitions the application to `under_review` via an intake domain API call; intake owns the state change; (B) Workflow-driven — the workflow domain's task `claim` event triggers the application state change; the intake domain subscribes to that event; cross-domain dependency but avoids requiring a separate explicit caseworker action | **Open** |
-| 11 | Event envelope format | (A) CloudEvents 1.0 — CNCF standard, transport-agnostic, compatible with AsyncAPI, has SDKs in most languages, no vendor lock-in; (B) Custom envelope — blueprint-defined structure, full control but no tooling ecosystem, migration cost if standards adoption grows; (C) No standard envelope — each domain defines its own payload shape, maximum flexibility but inconsistent consumer experience | **Open** |
-| 12 | Member-to-member relationship matrix (MAGI) | MAGI Medicaid requires knowing how household members relate to each other — not just to the primary applicant — to compute the tax household. (A) Single `relationship` field on ApplicationMember pointing to the primary applicant only — simpler, sufficient for SNAP; (B) Separate relationship entity capturing pairwise relationships between any two members — required for accurate MAGI tax household computation | **Open** |
-| 13 | Person identity matching | During intake, members are submitted as name/SSN/DOB — they may or may not match an existing person record in the system. (A) Intake domain handles matching — ApplicationMember resolves to an existing Person or creates a new one; (B) Separate identity/person domain handles matching — intake submits raw member data and receives back a matched or created person ID; (C) No matching at intake — identity resolution is deferred to the eligibility or case management phase | **Open** |
-| 14 | Income and expense detail at intake | (A) Full detail at intake — income by source, employer, amount, frequency per person; expenses by type, amount per household; matches what eligibility needs for a complete determination; (B) Summary only at intake — gross monthly income and expense totals; detail collected later during caseworker review or via verification; simpler intake form, less burden on applicant | **Open** |
-| 15 | MAGI tax filing status fields | MAGI Medicaid requires tax filing status data not needed for SNAP — `taxFilingStatus`, `claimedAsDependentBy`, `expectToFileTaxes`, `marriedFilingJointly`. (A) Flat fields on ApplicationMember — consistent with other eligibility attributes; (B) Separate `TaxFilingStatus` sub-entity on ApplicationMember — consistent with Cúram's evidence model, groups MAGI-specific fields; (C) Omit from baseline — MAGI fields added via state overlay when Medicaid support is in scope | **Open** |
+Quick reference — each decision is detailed in the section below.
 
-### Decision context
+| # | Decision | Status |
+|---|---|---|
+| 1 | Role vs. relationship on ApplicationMember | **Open** |
+| 2 | Programs applied for — placement | **Open** |
+| 3 | Program-specific eligibility attributes — structure | **Open** |
+| 4 | Authorized representative — modeling | **Open** |
+| 5 | Domain events — scope | **Open** |
+| 6 | Event type naming convention | **Open** |
+| 7 | Application → Case handoff | **Open** |
+| 8 | Intake phase end — lifecycle state | **Open** |
+| 9 | Application data mutability and audit trail | **Open** |
+| 10 | submitted → under_review transition trigger | **Open** |
+| 11 | Event envelope format | **Open** |
+| 12 | Member-to-member relationship matrix (MAGI) | **Open** |
+| 13 | Person identity matching | **Open** |
+| 14 | Income and expense detail at intake | **Open** |
+| 15 | MAGI tax filing status fields | **Open** |
 
-**Decision 1 — Role vs. relationship:**
-Cúram separates these clearly: the application-process role lives on `CASEPARTICIPANTROLE.participantRoleType`; the family relationship lives in a separate relationship evidence entity. Salesforce's `PublicApplicationParticipant.ParticipantRole` covers application-process roles (Applicant, Household Member, Authorized Representative); family relationships are modeled separately via `PartyRelationshipGroupMember.MemberRole`. Pega similarly separates `IsHeadOfHousehold` and `RelationshipToHouseholdHead` from the member's role in the application.
+---
 
-The risk in conflating them: an authorized representative may also be a family member; a non-applying member has no meaningful application-process role but still has a family relationship that matters for MAGI Medicaid tax-household composition.
+### Decision 1: Role vs. relationship on ApplicationMember
 
-**Decision 2 — Programs applied for:**
-Cúram and Pega track programs at the application level. Salesforce creates separate application records per benefit for multi-benefit applications (application level) or uses participant records (member level). CalSAWS tracks at application level with a simple `isApplyingForBenefit` boolean per member. No major vendor tracks per-member, per-program in a structured sub-object at the intake stage. Most use a boolean flag on the member combined with an application-level programs list.
+**Status:** Open
 
-However, "less standardized" does not mean "less necessary." Per-member, per-program tracking is required by regulation for multi-program applications: Medicaid eligibility is determined individually for each household member (each person gets their own determination); SNAP allows individual members to be excluded from the household (non-citizens, ineligible students) even while living there; WIC is fully individual certification. The reason vendors don't expose this as a clean structured feature is largely that they push the distinction downstream — Salesforce handles it by creating separate application records per program; Cúram and Pega evaluate per-member, per-program household composition in the eligibility rules engine using the same underlying person data. This is a design choice — pushing the distinction into the eligibility layer rather than making it explicit at intake. The tradeoff: keeping it implicit in intake is simpler and more flexible, but eligibility receives less explicit input and must infer more. Making it explicit at intake gives eligibility a cleaner handoff but requires the intake data model to carry more structure.
+**What's being decided:** Whether the member's role in the application process (primary applicant, household member, authorized representative) and their family relationship to the primary applicant (spouse, child, parent) are one field or two.
 
-**Decision 3 — Eligibility attributes structure:**
-Every major vendor surveyed — Cúram, Pega, Salesforce, CalSAWS, MAGI-in-the-Cloud, CMS Marketplace API — places citizenship, immigration status, pregnancy, disability, and student status as flat attributes on the person/member entity. None use per-program nested objects for these facts at the intake stage. The eligibility rules engine applies person facts to program rules independently.
+**Vendor approaches:**
+- **Cúram**: Separates these explicitly. Application-process role is `participantRoleType` on `CASEPARTICIPANTROLE` (Primary Client, Member, Counted Non-Applicant, AuthorisedRepresentative). Family relationship is a separate relationship evidence entity with pairwise `personA → personB → relationshipType` records.
+- **Salesforce**: `PublicApplicationParticipant.ParticipantRole` covers application-process roles (Applicant, Co-Applicant, Household Member, Authorized Representative). Family relationships are modeled separately via `PartyRelationshipGroupMember.MemberRole` on the household group.
+- **Pega**: Separates `IsHeadOfHousehold` and the application-process role from `RelationshipToHouseholdHead` (spouse, child, parent, sibling, other).
 
-**Decision 4 — Authorized representative:**
-Salesforce and Cúram both model the authorized rep as a role on the participant junction record. Pega uses a separate reference from the application to a person entity. SNAP regulations (7 CFR § 273.2(n)) require the designation to be in writing and distinguish the authorized rep from household members — both approaches can satisfy this.
+**Considerations:**
+- An authorized representative may also be a family member — a single field can't represent both accurately
+- A non-applying household member has no meaningful application-process role but does have a family relationship that matters for MAGI Medicaid tax-household composition
+- All major vendors separate these two concepts; no major vendor conflates them
 
-A key regulatory distinction affects this decision: for SNAP, the authorized representative must be an "adult nonmember of the household" — they are explicitly outside the household and never apply for benefits on the same application. For Medicaid (42 CFR § 435.923), the restriction is less clear and a household member could act as authorized representative. This matters for modeling: if the authorized rep is typically an external party (CBO worker, social worker, attorney) with no other connection to the application, modeling them as a role on `ApplicationMember` is conceptually odd — they are not a household member. A separate reference from the Application entity (Pega's approach) more accurately reflects this. The role-on-member approach is more natural when the authorized rep is always a person already represented elsewhere in the application.
+**Options:**
+- **(A)** Single `relationship` field encoding both application role and family relationship
+- **(B)** Separate `role` field (application process role: primary_applicant, household_member, non_applying_member, authorized_representative, absent_parent) and `relationship` field (family relationship to primary applicant: spouse, child, parent, etc.)
 
-**Decision 8 — Intake phase end:**
-Cúram's model is fluid: the `ApplicationCase` stays open throughout eligibility review; eligibility rules can be run at any point against current evidence; the case closes when a final determination is made. There is no explicit "submitted for determination" state. Pega is more explicit: the Application Request case type has distinct stages (Intake → Eligibility → Review → Determination), and the stage transition from Intake to Eligibility is the clean handoff point.
+---
 
-The tradeoff: a `pending_determination` state makes the domain boundary explicit and gives the intake domain a clean terminal event (`application.submitted_for_determination`) that the eligibility domain subscribes to. Without it, the intake and eligibility domains overlap during `under_review`, which makes it harder to reason about ownership and harder to independently scale or replace either domain. The cost is an additional state and transition to manage.
+### Decision 2: Programs applied for — placement
 
-Note: the end of the intake phase is determined by the caseworker completing their review (Decision 9), not by a timer. The caseworker signals readiness when they are satisfied the application data is accurate and complete.
+**Status:** Open
 
-**Decision 9 — Application data mutability and audit trail:**
-Caseworkers routinely update application data during `under_review` — correcting entries based on the interview, reconciling discrepancies between submitted information and received documents, and adding information the applicant could not provide at submission. This means the application record at the point of eligibility determination may differ materially from what the applicant originally submitted. Cúram handles this through its evidence management system — all evidence is "In Edit" during the application phase, and changes are versioned. Pega tracks changes through its case audit framework. Salesforce creates a `BenefitAssignmentAdjustment` for post-approval changes but relies on standard Salesforce field history for in-review changes.
+**What's being decided:** Where in the data model to track which programs are being applied for — at the application level, the member level, or both.
 
-The blueprint needs to decide whether the audit trail is the intake domain's responsibility (field-level change tracking on the Application and ApplicationMember entities) or a cross-cutting concern handled by a separate audit/activity domain that subscribes to mutation events.
+**Vendor approaches:**
+- **Cúram**: `BenefitTypeList` child entity of `Application` — application-level. Member-level tracking uses `isApplyingForBenefit` boolean, not a per-program breakdown.
+- **Salesforce**: For single-benefit apps, `BenefitId` on `IndividualApplication`. For multi-benefit, creates a separate `IndividualApplication` per benefit — effectively application-level with one application per program.
+- **Pega**: `ProgramsApplied` page list on the Application Request case — application-level. Per-member, per-program distinctions are evaluated by the eligibility rules engine, not stored at intake.
+- **CalSAWS**: `programs` list on the Application entity — application-level. Members have `isApplyingForBenefit` boolean only.
 
-**Decision 11 — Event envelope format:**
-None of the major vendors use CloudEvents — Salesforce uses its proprietary Platform Events format, Cúram uses JMS message structures, and Pega uses its own internal message format. However, CloudEvents is the emerging standard for event envelopes in government technology and cloud-native systems, with growing adoption in AWS EventBridge, Azure Event Grid, and Google Cloud Eventarc — all of which natively support CloudEvents. It is also explicitly compatible with AsyncAPI: AsyncAPI 2.x and 3.x support CloudEvents as a message format binding, meaning adopting CloudEvents now does not foreclose the AsyncAPI path later. The main argument against: it's an external dependency and adds a `specversion` field and envelope wrapper that states must handle. The argument for: consistent envelope across all domains, transport independence, and ecosystem tooling (SDKs, validation libraries) that states get for free.
+**Considerations:**
+- The application-level programs list (what programs this household is applying for) is universal across all vendors
+- Per-member, per-program tracking (this member is applying for SNAP but not Medicaid) is less standardized but is required by regulation: Medicaid eligibility is determined individually for each member; SNAP allows individual members to be excluded even if they live in the household; WIC is fully individual certification
+- Vendors that omit explicit per-member, per-program tracking push the distinction into the eligibility rules engine — simpler intake model but less explicit handoff to eligibility
+- Making it explicit at intake gives eligibility a cleaner input but requires the intake data model to carry more structure
 
-**Decision 12 — Member-to-member relationship matrix:**
-MAGI Medicaid household composition is determined by tax filing relationships, not physical co-habitation — who claims whom as a dependent, who files jointly with whom. To compute the tax household, the system needs to know how members relate to each other, not just to the primary applicant. Cúram models this as a separate `Relationships` entity capturing pairwise `personA → personB → relationshipType` records. MAGI-in-the-Cloud captures this as a `household_relationships` array on each applicant pointing to other applicant IDs. A `relationship` field pointing only to the primary applicant (option A) is sufficient for SNAP household composition but will not support MAGI Medicaid tax household derivation without additional data.
+**Options:**
+- **(A)** Application level only — one programs list on Application, member-level distinction inferred downstream
+- **(B)** Member level only — each ApplicationMember has a `programsApplyingFor` list; application-level programs list derived from member data
+- **(C)** Both — Application has a programs list (household intent), ApplicationMember has a `programsApplyingFor` list (individual intent); most explicit handoff to eligibility
 
-**Decision 13 — Person identity matching:**
-Cúram uses `PROSPECTPERSON` during intake — an unresolved identity record that is later matched to an existing `PERSON` in the participant registry. This two-stage model prevents duplicate person records when the same individual appears on multiple applications over time. The blueprint needs to decide whether this matching happens at the intake boundary (intake domain resolves identity before the record is created), at a separate identity service (intake submits raw data, gets back a person ID), or is deferred entirely to eligibility or case management. Deferring matching to the eligibility phase risks creating duplicate records if the same household applies multiple times.
+---
 
-**Decision 14 — Income and expense detail at intake:**
-Regulatory requirements set the floor: SNAP requires enough income information to determine gross income test eligibility (used for expedited screening) and net income test eligibility. The question is whether the intake form collects full line-item detail (income by source, employer, frequency) or a summary that is refined during caseworker review. GetCalFresh collected simplified income information (totals by category) and CalSAWS collected full detail. Full detail at intake is more burdensome for applicants but gives caseworkers and eligibility a cleaner starting point. Summary-only intake requires caseworkers to collect detail during review, which adds time but may be more accurate (applicants may not know exact figures at time of filing).
+### Decision 3: Program-specific eligibility attributes — structure
 
-**Decision 15 — MAGI tax filing status fields:**
-These fields are only needed for Medicaid MAGI eligibility — a SNAP-only implementation doesn't need them. The question is whether to include them in the baseline `ApplicationMember` schema or add them via state overlay when Medicaid is in scope. Including them in the baseline ensures the schema is multi-program-ready out of the box. Adding via overlay keeps the baseline leaner but means states adding Medicaid support must overlay the schema before implementation. Cúram models these as a separate `TaxFilingStatus` evidence entity; MAGI-in-the-Cloud puts them as flat fields on each applicant.
+**Status:** Open
 
-**Decision 10 — submitted → under_review trigger:**
-Most vendors handle this as an explicit caseworker action: in Cúram, the worker is assigned to the `ApplicationCase` and the case status updates; in Pega, the caseworker opens the Application Request case and begins the Intake stage. Neither system uses a cross-domain event from a workflow/task system to drive the application state change — the intake/case system owns both the task assignment and the case status. For the blueprint, where the workflow domain is separate from the intake domain, this creates a choice: requiring a separate explicit API call on the intake domain to open the application (clean domain ownership, extra step) vs. having the intake domain react to workflow events (fewer steps, cross-domain coupling). The workflow-driven approach is more event-driven but means the intake domain's state is partially controlled by another domain.
+**What's being decided:** Whether eligibility-relevant attributes (citizenship, immigration status, pregnancy, student status, disability) are flat fields on ApplicationMember or nested inside a per-program structure.
+
+**Vendor approaches:**
+- **Cúram**: Flat child entities of `Person` in IEG — `CitizenshipStatus`, `Pregnancy`, `Disability` as separate typed sub-entities, each with their own fields. Not per-program nested.
+- **Pega**: Flat embedded pages on `Person` — `CitizenshipStatus`, `IsPregnant`, `HasDisability` as flat properties.
+- **MAGI-in-the-Cloud**: Flat fields on each applicant — `is_pregnant`, `is_blind_or_disabled`, `is_full_time_student`, `tax_filer_status`.
+- **CMS Marketplace API**: Flat fields on `Person` — `is_pregnant`, `is_parent`, `has_mec`, `uses_tobacco`.
+- **CalSAWS**: Flat fields on `HouseholdMember` — `citizenshipStatus`, `immigrationStatus`, `isPregnant`, `hasDisability`.
+
+**Considerations:**
+- All vendors surveyed use flat facts on the person/member entity — no major vendor nests eligibility attributes per-program at intake
+- These attributes are facts about the person, not facts about the program: citizenship status doesn't change depending on which program is being applied for; the same fact is evaluated by each program's rules independently
+- Nesting per-program would duplicate data (the same citizenship status entered once per program) and complicate data entry
+- The one exception: `programsApplyingFor` itself is genuinely per-program (which programs this member is requesting)
+
+**Options:**
+- **(A)** Flat on ApplicationMember — citizenship, immigration status, pregnancy, student status, disability as direct fields; consistent with all major vendors
+- **(B)** Per-program nested — each program entry on the member has its own sub-object with program-specific fields
+- **(C)** Hybrid — flat for shared person facts, per-program only for attributes that are genuinely program-specific (e.g., work registration exemption reason, which has different rules per program)
+
+---
+
+### Decision 4: Authorized representative — modeling
+
+**Status:** Open
+
+**What's being decided:** Whether the authorized representative is a role on an ApplicationMember record or a separate reference from the Application entity.
+
+**Vendor approaches:**
+- **Salesforce**: `PublicApplicationParticipant` with `ParticipantRole = Authorized Representative` — a role on the member junction record, no separate entity
+- **Cúram**: `CASEPARTICIPANTROLE` with `participantRoleType = AuthorisedRepresentative` — same pattern; role on the participant record, no separate entity
+- **Pega**: `AuthorizedRepresentativeID` reference on the Application case pointing to a separate `Person` entity — separate reference, not a member role
+
+**Considerations:**
+- SNAP regulations (7 CFR § 273.2(n)) require the authorized representative to be an "adult nonmember of the household" — they are explicitly outside the household and cannot apply for benefits on the same application. Modeling them as a role on `ApplicationMember` is conceptually imprecise for SNAP: they are not a member.
+- Medicaid regulations (42 CFR § 435.923) are less restrictive — a household member could act as authorized representative for Medicaid purposes.
+- If the authorized rep is typically an external party (CBO worker, social worker, attorney) with no other connection to the application, a separate reference from Application (Pega's approach) is more accurate.
+- The role-on-member approach is simpler if the authorized rep is always represented elsewhere in the application data.
+
+**Options:**
+- **(A)** Role on ApplicationMember (`role: authorized_representative`) — consistent with Salesforce and Cúram; simpler; conceptually imprecise for SNAP
+- **(B)** Separate reference on Application pointing to a person record — consistent with Pega; more accurate for SNAP's non-household-member requirement; adds a separate relationship to manage
+
+---
+
+### Decision 5: Domain events — scope
+
+**Status:** Open
+
+**What's being decided:** Whether the intake domain emits events only on lifecycle state transitions or also on significant data changes within a stable state.
+
+**Vendor approaches:**
+- **Cúram**: Internally event-driven on evidence changes — the evidence framework notifies internal listeners whenever evidence is created, updated, or activated. Not exposed externally; external integration is via REST or batch.
+- **Salesforce**: Change Data Capture (CDC) publishes change events for every record create/update/delete — a data mutation approach externally available via Streaming API. Platform Events provide explicit business event publishing for higher-level events.
+- **Pega**: Internal signals for case-to-case events; `Message Shape` in case workflows for explicit external event publishing. No automatic CDC equivalent for external consumers.
+
+**Considerations:**
+- Transitions-only is simpler and easier to reason about — events are predictable and tied to known state changes
+- Data mutation events enable downstream domains to react without polling (e.g., eligibility re-evaluates when income is updated during caseworker review)
+- Data mutation events create more coupling — every domain that might care about any field change needs to subscribe and filter
+- Some data changes during intake are operationally significant (member added, income corrected) and would otherwise require polling to detect
+
+**Options:**
+- **(A)** Transition events only — events map 1:1 to lifecycle state changes (`submitted`, `opened`, `withdrawn`, `closed`)
+- **(B)** Data mutation events too — additional events emitted on significant data changes within a stable state (`member_added`, `income_updated`, `expedited_flagged`)
+
+---
+
+### Decision 6: Event type naming convention
+
+**Status:** Open
+
+**What's being decided:** The naming format for the `type` field on domain events — a load-bearing decision since consumers filter and route on event type names, and renaming is a breaking change.
+
+**Vendor approaches:**
+No vendor uses a standard naming convention — all use proprietary formats (Salesforce Platform Event names, Pega signal names, Cúram event codes). The CloudEvents community convention uses reverse-DNS domain prefix: `com.github.pull_request.opened`, `io.knative.source.apiserver.resource.add`.
+
+**Considerations:**
+- Once consumers depend on a type name, renaming it is a breaking change for all subscribers
+- The `source` field on CloudEvents already carries domain context — the `type` field can be kept simpler if `source` is relied upon for routing
+- A reverse-DNS prefix (`gov.safetynets.`) ties the names to the project and avoids collisions in shared broker environments
+- Type names should be consistent across all domains, not just intake — this decision applies blueprint-wide
+
+**Options:**
+- **(A)** `gov.safetynets.{domain}.{entity}.{verb}` — e.g., `gov.safetynets.intake.application.submitted`; fully qualified, collision-safe, verbose
+- **(B)** `{entity}.{verb}` with `source` carrying domain context — e.g., type `application.submitted`, source `/domains/intake`; simpler type names, relies on `source` for domain routing
+
+---
+
+### Decision 7: Application → Case handoff
+
+**Status:** Open
+
+**What's being decided:** When and how an approved application creates a Case in the case management domain — what triggers it, what data carries over, and which domain is responsible for creating the Case.
+
+**Vendor approaches:**
+- **Cúram**: The `ApplicationCase` is resolved and a `ProductDeliveryCase` is created per approved program when the eligibility determination is confirmed. This is internal to Cúram — the case system triggers it, not an external event. Data carries over via the evidence framework (same evidence records are linked to the delivery case).
+- **Salesforce**: A `BenefitAssignment` is created when `IndividualApplication.Status` moves to Approved. The case management layer is within the same Salesforce org — the transition is triggered by a Flow or Apex trigger on the application record, not an external event.
+- **Pega**: The Application Request case resolves and spawns program-specific delivery sub-cases at determination. Internal to Pega's case hierarchy.
+
+**Considerations:**
+- In all major vendors, case creation is triggered internally within a single system — not across a domain boundary. The blueprint separates intake and case management into distinct domains, which makes this boundary explicit and requires a design decision that vendors don't face.
+- Key questions: Does the intake domain trigger case creation (by emitting `application.closed`)? Does the eligibility domain trigger it (by emitting `eligibility.determined`)? Does case management poll for closed applications?
+- What data carries over: all ApplicationMember data, income, expenses, assets, programs approved — the full intake record needs to be accessible to case management
+- Timing: does a case get created immediately on approval of any one program, or after all programs in a multi-program application are determined?
+
+**Options:**
+- **(A)** Intake domain emits `application.closed`; case management subscribes and creates a Case
+- **(B)** Eligibility domain emits `eligibility.determined` with outcome; case management subscribes and creates a Case only when outcome is approved
+- **(C)** Case management polls closed applications and creates Cases as a batch process
+
+---
+
+### Decision 8: Intake phase end — lifecycle state
+
+**Status:** Open
+
+**What's being decided:** Whether the intake domain has an explicit lifecycle state signaling that data collection is complete and the application is ready for eligibility determination, or whether the intake domain stays open until the eligibility domain closes it.
+
+**Vendor approaches:**
+- **Cúram**: Fluid boundary. The `ApplicationCase` stays open throughout eligibility review. Eligibility rules can be run at any point against current evidence. No explicit "submitted for determination" state — the case closes when a final determination is made.
+- **Pega**: Explicit stage boundary. The Application Request case type has distinct stages: Intake → Eligibility → Review → Determination. The caseworker explicitly advances the case from the Intake stage to the Eligibility stage, creating a clean handoff point.
+- **Salesforce**: Status-based but no explicit "ready for determination" state — the application moves from `Under Review` to `Approved`/`Denied` without a distinct intermediate state.
+
+**Considerations:**
+- A `pending_determination` state makes the domain boundary explicit — the caseworker signals when intake is complete; the eligibility domain subscribes to the resulting event (`application.submitted_for_determination`) and begins its work
+- Without an explicit state, intake and eligibility overlap during `under_review`, making it harder to reason about domain ownership and harder to independently scale or replace either domain
+- The end of intake is determined by the caseworker's judgment (see Decision 9), not a timer — any explicit state must be triggered by a caseworker action
+- Adding a state adds a transition to manage and a caseworker step to take
+
+**Options:**
+- **(A)** No explicit end state — intake `closed` when the eligibility domain closes it; fluid boundary similar to Cúram
+- **(B)** Explicit `pending_determination` state — caseworker transitions the application when data collection is complete; intake emits `application.submitted_for_determination`; eligibility domain owns everything after
+
+---
+
+### Decision 9: Application data mutability and audit trail
+
+**Status:** Open
+
+**What's being decided:** How changes to application data made by caseworkers during `under_review` are tracked — and whether the intake domain owns the audit trail or delegates it.
+
+**Vendor approaches:**
+- **Cúram**: Evidence management system versions all changes. Evidence is "In Edit" during the application phase; each update creates a new version. The caseworker's changes are distinguishable from the applicant's original submission. The audit trail is part of the evidence framework, owned by the case/intake system.
+- **Pega**: Case audit framework tracks all data changes with who changed what and when. Built into the platform; the intake domain owns this by default.
+- **Salesforce**: Relies on standard Salesforce field history tracking for in-review changes. Post-approval changes to benefit amounts create `BenefitAssignmentAdjustment` records. Audit trail is a platform feature, not domain logic.
+
+**Considerations:**
+- Application data at the point of eligibility determination may differ materially from the applicant's original submission — caseworkers correct entries based on the interview, reconcile against documents, and add information the applicant couldn't provide
+- Regulatory requirements for SNAP require states to maintain documentation of how eligibility was determined; an audit trail of data changes supports this
+- Field-level tracking (who changed what field, when, from what value to what value) is the most granular but also the most complex to implement
+- A cross-cutting audit domain (subscribing to domain events) is cleaner architecturally but requires data mutation events (Decision 5) to be emitted
+
+**Options:**
+- **(A)** Field-level change tracking on Application and ApplicationMember — intake domain owns the audit trail; each update records who changed what and when, distinguishing applicant-submitted from caseworker-corrected values
+- **(B)** Version-level tracking — each caseworker save creates a new snapshot of the application record; simpler than field-level but coarser granularity
+- **(C)** No audit trail in intake domain — changes tracked by a separate audit/activity domain that subscribes to domain mutation events; intake stays simpler but requires Decision 5B (data mutation events)
+
+---
+
+### Decision 10: submitted → under_review transition trigger
+
+**Status:** Open
+
+**What's being decided:** Whether the `submitted → under_review` transition is triggered by an explicit intake domain action or driven by an event from the workflow domain when a caseworker claims the intake task.
+
+**Vendor approaches:**
+- **Cúram**: Explicit caseworker action — the worker is assigned to the `ApplicationCase` and the case status updates. The intake/case system owns both task assignment and case status; no cross-domain event involved.
+- **Pega**: Explicit caseworker action — the caseworker opens the Application Request case and begins the Intake stage. Same system owns both.
+- **Salesforce**: Status update via Flow or direct record update — within a single system.
+
+**Considerations:**
+- In all major vendors, the intake system and the task/workflow system are the same system — this cross-domain question doesn't arise. The blueprint separates them.
+- The workflow-driven approach (intake reacts to a task `claim` event) is more event-driven and avoids requiring a separate explicit API call, but means the intake domain's state is partially controlled by another domain
+- The explicit-action approach (caseworker calls the intake API to open the application) gives intake full ownership of its own state but requires an extra step
+- Assignment (routing to a worker's queue) and opening (caseworker begins review) may be two distinct moments — see the lifecycle section
+
+**Options:**
+- **(A)** Explicit intake action — caseworker calls the intake domain API to open the application; intake owns the state change; consistent with how all major vendors handle this
+- **(B)** Workflow-driven — the workflow domain's task `claim` event triggers the intake domain to move to `under_review`; fewer steps, more event-driven, cross-domain coupling
+
+---
+
+### Decision 11: Event envelope format
+
+**Status:** Open
+
+**What's being decided:** The standard wrapper format for all domain events — the envelope that carries event metadata (id, source, type, timestamp) around the event-specific payload.
+
+**Vendor approaches:**
+- **Salesforce**: Proprietary Platform Events format — consumers must use Salesforce Streaming API or CometD protocol
+- **Cúram**: JMS message structure — internal to the JMS broker; no standard external format
+- **Pega**: Internal message format — external consumers use REST or Pega's Data Integration Services
+- **AWS EventBridge, Azure Event Grid, Google Cloud Eventarc**: All natively support CloudEvents 1.0 as their standard event format
+
+**Considerations:**
+- No major government benefits vendor uses CloudEvents natively — but the cloud platforms states are already running on do
+- CloudEvents is transport-agnostic: the same envelope works over HTTP webhooks, Kafka, SNS/SQS, or any transport; state partners can adopt without introducing a message broker
+- CloudEvents is explicitly compatible with AsyncAPI (2.x and 3.x support CloudEvents binding), so adopting it now doesn't foreclose the AsyncAPI path later
+- A custom envelope gives full control but has no tooling ecosystem and creates migration cost if standards adoption grows
+- No envelope standard means each domain defines its own payload shape — maximum flexibility but inconsistent consumer experience across domains
+
+**Options:**
+- **(A)** CloudEvents 1.0 — CNCF standard, transport-agnostic, cloud-native ecosystem support, AsyncAPI-compatible, SDKs in most languages
+- **(B)** Custom blueprint envelope — full control, no external dependency, no tooling ecosystem
+- **(C)** No standard envelope — each domain defines its own payload shape
+
+---
+
+### Decision 12: Member-to-member relationship matrix (MAGI)
+
+**Status:** Open
+
+**What's being decided:** Whether the data model captures relationships between any two household members (required for MAGI Medicaid tax household computation) or only the relationship of each member to the primary applicant.
+
+**Vendor approaches:**
+- **Cúram**: Separate `Relationships` entity capturing pairwise `personA → personB → relationshipType` records — supports full relationship matrix between any two members
+- **MAGI-in-the-Cloud**: `household_relationships` array on each applicant object, with entries pointing to other applicant IDs and the relationship type — full pairwise matrix
+- **Pega**: `RelationshipToHouseholdHead` on the `HouseholdMember` entry — relationship to head only; full pairwise matrix not captured at the member entity level
+- **CalSAWS**: `relationshipToHead` on `HouseholdMember` — relationship to primary applicant only
+
+**Considerations:**
+- MAGI Medicaid household composition is determined by tax filing relationships — who claims whom as a dependent, who files jointly with whom — not by physical co-habitation. Computing the tax household requires knowing how members relate to each other, not just to the primary applicant.
+- A relationship-to-primary-only field is sufficient for SNAP household composition (SNAP uses physical co-habitation, not tax relationships)
+- If the baseline is SNAP-focused and Medicaid is added via overlay, the relationship matrix could be added when Medicaid support is scoped
+- A pairwise relationship matrix grows in complexity with household size; for a household of N members there are N×(N-1)/2 possible pairs
+
+**Options:**
+- **(A)** Relationship to primary applicant only — single `relationship` field on ApplicationMember; sufficient for SNAP; insufficient for MAGI
+- **(B)** Full pairwise relationship matrix — separate relationship entity capturing member-to-member relationships; required for MAGI; consistent with Cúram and MAGI-in-the-Cloud
+
+---
+
+### Decision 13: Person identity matching
+
+**Status:** Open
+
+**What's being decided:** Whether the intake domain resolves submitted member data (name, SSN, date of birth) to an existing person identity record, and if so, who is responsible for that matching.
+
+**Vendor approaches:**
+- **Cúram**: Two-stage model. During intake, `PROSPECTPERSON` records are created for unresolved identities. After intake, they are matched to existing `PERSON` records in the participant registry via a matching process. Prevents duplicate person records when the same individual appears on multiple applications over time.
+- **Salesforce**: Person Accounts are used throughout — the matching/deduplication is handled by Salesforce's standard duplicate rules at the time of record creation. No separate "prospect" concept.
+- **Pega**: `PegaPS-Data-Entity-Person` is created or matched during intake using Pega's data matching rules. No separate prospect entity.
+
+**Considerations:**
+- Without identity matching, the same real person (who applied last year and is applying again) creates duplicate records, leading to data quality problems and incorrect eligibility determinations
+- Matching at intake requires the intake domain to have access to the person registry — a cross-domain dependency
+- Deferring matching to eligibility or case management keeps intake simpler but risks creating duplicates if a household applies multiple times before a match is performed
+- A separate identity/person domain that handles matching is architecturally clean but adds a synchronous dependency during the intake flow
+
+**Options:**
+- **(A)** Intake domain handles matching — ApplicationMember resolves to an existing Person or creates a new one during submission
+- **(B)** Separate identity/person domain handles matching — intake submits raw member data and receives back a resolved person ID; matching logic is centralized
+- **(C)** No matching at intake — identity resolution deferred to eligibility or case management phase
+
+---
+
+### Decision 14: Income and expense detail at intake
+
+**Status:** Open
+
+**What's being decided:** Whether the intake form collects full income and expense detail or a summary that is refined during caseworker review.
+
+**Vendor approaches:**
+- **GetCalFresh (Code for America)**: Simplified income collection — totals by category (job income, other income), not line-item by employer or source. Prioritized applicant completion rate over data completeness.
+- **CalSAWS / BenefitsCal**: Full line-item detail — income by source, employer, amount, frequency per person; expenses by type and amount. Matches what the eligibility rules engine needs.
+- **Cúram**: Full detail — `Income` child entities per person with `incomeType`, `amount`, `frequency`, `employerName`, `startDate`.
+- **Pega**: Full detail — `Income` page list per person with typed income entries.
+
+**Considerations:**
+- SNAP expedited eligibility screening (7-day track) requires income information at the time of filing — without at least a gross income figure, expedited screening cannot be performed immediately after submission
+- Full detail at intake is more burdensome for applicants — income amounts, employer names, and frequencies may not be known at the time of filing; applicants may estimate or leave fields blank
+- Summary-only intake reduces applicant burden but requires caseworkers to collect full detail during review, adding time and a data-entry step
+- Applicants who provide detail at intake may provide more accurate information than what a caseworker enters after the fact from documents
+
+**Options:**
+- **(A)** Full detail at intake — income by source, employer, amount, frequency per person; expenses by type and amount; matches eligibility needs directly
+- **(B)** Summary only at intake — gross monthly income and total expense figures; detail collected during caseworker review or via verification
+
+---
+
+### Decision 15: MAGI tax filing status fields
+
+**Status:** Open
+
+**What's being decided:** Whether MAGI Medicaid-specific tax filing status fields (`taxFilingStatus`, `claimedAsDependentBy`, `expectToFileTaxes`, `marriedFilingJointly`) are in the baseline ApplicationMember schema or added via overlay when Medicaid support is in scope.
+
+**Vendor approaches:**
+- **Cúram**: `TaxFilingStatus` is a separate evidence entity linked to the participant role — grouped separately from other member attributes.
+- **MAGI-in-the-Cloud**: Flat fields on each applicant — `tax_filer_status`, `is_claimed_as_dependent`, with `household_relationships` for dependency relationships.
+- **CalSAWS**: Captures tax filing status as part of the member record for Medicaid-applicable cases.
+
+**Considerations:**
+- These fields are only needed when Medicaid eligibility is in scope — a SNAP-only implementation has no use for them
+- Including them in the baseline schema ensures any state adding Medicaid support doesn't need to overlay the schema first — the fields are there and can be left empty for non-Medicaid cases
+- Omitting them from the baseline keeps the schema leaner and signals that Medicaid-specific design is deferred; states add via overlay when they scope Medicaid
+- There is a risk that if omitted from the baseline, states independently add them in different ways — inconsistent naming, field types, or structure across implementations
+
+**Options:**
+- **(A)** Flat fields on ApplicationMember in the baseline — consistent with MAGI-in-the-Cloud; multi-program-ready out of the box; adds fields irrelevant to SNAP-only states
+- **(B)** Separate `TaxFilingStatus` sub-entity on ApplicationMember in the baseline — consistent with Cúram; groups MAGI-specific fields; adds a sub-object irrelevant to SNAP-only states
+- **(C)** Omit from baseline — added via state overlay when Medicaid support is scoped; keeps baseline lean; risks inconsistent implementations across states
 
 ---
 
