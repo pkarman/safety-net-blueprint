@@ -286,7 +286,7 @@ Quick reference — each decision is detailed in the section below.
 | 8 | [Application data mutability and audit trail](#decision-8-application-data-mutability-and-audit-trail) | **Decided: C** | Audit logic should live once, not be duplicated in every domain. A cross-cutting audit domain subscribing to mutation events enables consistent version history across all domains and cross-domain queries. Mutation events must carry before/after field values or full snapshots to support version reconstruction. |
 | 9 | [submitted → under_review transition trigger](#decision-9-submitted--under_review-transition-trigger) | **Decided: B** | Consistent with Decision 7: intake owns its own state transitions but reacts to events from other domains. Intake subscribes to `task.claimed` from the workflow domain and transitions the application to `under_review`. One caseworker action; intake handles the rest automatically. |
 | 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | **Decided: A** | Fully qualified type names are self-contained, collision-safe across organizations, and consistent with the CloudEvents community convention. Prefix is `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — e.g., `org.codeforamerica.safety-net-blueprint.intake.application.submitted`. |
-| 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Open** | |
+| 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Decided: A** | The `claimedAsDependentBy` and tax filing status fields cover the vast majority of MAGI household composition cases. The pairwise matrix only adds precision for the edge case where a non-primary adult is a parent of a child who isn't explicitly claimed as a dependent — that case is a known gap not covered by the baseline. |
 | 12 | [Person identity matching](#decision-12-person-identity-matching) | **Open** | |
 | 13 | [Income and expense detail at intake](#decision-13-income-and-expense-detail-at-intake) | **Open** | |
 | 14 | [MAGI tax filing status fields](#decision-14-magi-tax-filing-status-fields) | **Open** | |
@@ -496,20 +496,22 @@ Arguments for a caseworker-triggered event with no new state:
 
 ### Decision 11: Member-to-member relationship matrix (MAGI)
 
-**Status:** Open
+**Status:** Decided: A
 
-**What's being decided:** Whether the data model captures relationships between any two household members (required for MAGI Medicaid tax household computation) or only the relationship of each member to the primary applicant.
+**What's being decided:** Whether the data model captures relationships between any two household members or only the relationship of each member to the primary applicant.
 
 **Considerations:**
 - Cúram and MAGI-in-the-Cloud both capture full pairwise relationships between any two members. Pega and CalSAWS capture only relationship to the head/primary applicant.
-- MAGI Medicaid household composition is determined by tax filing relationships — who claims whom as a dependent, who files jointly — not physical co-habitation. Computing the tax household requires knowing how members relate to each other.
-- A relationship-to-primary-only field is sufficient for SNAP (SNAP uses physical co-habitation, not tax relationships)
-- A pairwise relationship matrix grows in complexity with household size — N×(N-1)/2 possible pairs for a household of N members
-- If the baseline is SNAP-focused, the matrix could be added via overlay when Medicaid is scoped
+- MAGI household composition is determined by tax filing relationships, not physical co-habitation. The critical inputs are: who files taxes, who is claimed as a dependent by whom (`claimedAsDependentBy`), and who files jointly (spouse relationship). These fields cover the vast majority of MAGI household composition cases without a pairwise matrix.
+- The remaining gap: if a child has no `claimedAsDependentBy` set (not claimed by anyone) but has a non-primary parent in the household, MAGI rules require counting the child in that parent's household — but Option A doesn't capture that parent-child relationship explicitly. States implementing MAGI who encounter this edge case would need to extend the schema with a pairwise relationship entity.
+- A pairwise matrix grows in complexity with household size (N×(N-1) directed pairs); most intake forms guide applicants through dependency questions in a way that populates `claimedAsDependentBy` correctly anyway
+- A relationship-to-primary field is sufficient for SNAP (SNAP uses physical co-habitation, not tax relationships)
+
+**Known gap:** The baseline does not support the edge case where a non-primary adult is the parent of a household child who is not claimed as a tax dependent by anyone. States needing to handle this must extend the schema with a pairwise member relationship entity.
 
 **Options:**
-- **(A)** Relationship to primary applicant only — single `relationship` field on ApplicationMember; sufficient for SNAP; insufficient for MAGI
-- **(B)** Full pairwise relationship matrix — separate relationship entity capturing member-to-member relationships; required for MAGI; consistent with Cúram and MAGI-in-the-Cloud
+- **(A)** ✓ Relationship to primary applicant only — `relationship` field on ApplicationMember; sufficient for SNAP and most MAGI cases when combined with `claimedAsDependentBy` and tax filing status fields; lean baseline
+- **(B)** Full pairwise relationship matrix — separate relationship entity; covers all MAGI edge cases; consistent with Cúram and MAGI-in-the-Cloud; adds complexity for all states including those not implementing Medicaid
 
 ---
 
