@@ -285,7 +285,7 @@ Quick reference — each decision is detailed in the section below.
 | 7 | [Intake phase end — lifecycle state](#decision-7-intake-phase-end--lifecycle-state) | **Decided: C** | Domain autonomy: each domain owns its own state transitions. A `pending_determination` state would exist to serve a downstream domain's needs, not to represent meaningful business state in intake — an event handles that better. Intake signals what it knows (`review_completed`); eligibility publishes what it knows; intake closes the application based on its own logic. |
 | 8 | [Application data mutability and audit trail](#decision-8-application-data-mutability-and-audit-trail) | **Decided: C** | Audit logic should live once, not be duplicated in every domain. A cross-cutting audit domain subscribing to mutation events enables consistent version history across all domains and cross-domain queries. Mutation events must carry before/after field values or full snapshots to support version reconstruction. |
 | 9 | [submitted → under_review transition trigger](#decision-9-submitted--under_review-transition-trigger) | **Decided: B** | Consistent with Decision 7: intake owns its own state transitions but reacts to events from other domains. Intake subscribes to `task.claimed` from the workflow domain and transitions the application to `under_review`. One caseworker action; intake handles the rest automatically. |
-| 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | **Open** | |
+| 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | **Decided: A** | Fully qualified type names are self-contained, collision-safe across organizations, and consistent with the CloudEvents community convention. Prefix is `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — e.g., `org.codeforamerica.safety-net-blueprint.intake.application.submitted`. |
 | 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Open** | |
 | 12 | [Person identity matching](#decision-12-person-identity-matching) | **Open** | |
 | 13 | [Income and expense detail at intake](#decision-13-income-and-expense-detail-at-intake) | **Open** | |
@@ -477,20 +477,20 @@ Arguments for a caseworker-triggered event with no new state:
 
 ### Decision 10: Event type naming convention
 
-**Status:** Open
+**Status:** Decided: A
 
-**What's being decided:** The naming format for the event type identifier — a load-bearing decision since consumers filter and route on type names, and renaming is a breaking change. The specific field name (`type`, `eventType`, etc.) depends on the envelope format chosen in Decision 6.
+**What's being decided:** The naming format for the event type identifier — a load-bearing decision since consumers filter and route on type names, and renaming is a breaking change.
 
 **Considerations:**
 - No major vendor uses a standard naming convention — all use proprietary formats (Salesforce Platform Event names, Pega signal names, Cúram event codes)
 - Once consumers depend on a type name, renaming is a breaking change for all subscribers
-- CloudEvents was adopted (Decision 6), so the envelope has a `source` field identifying the emitting domain — the type name can be kept shorter since domain context is already in `source`
-- A reverse-DNS prefix (`gov.safetynets.`) avoids collisions in shared broker environments and ties names to the project
+- CloudEvents was adopted (Decision 6); the `source` field carries domain context, so a shorter type name is possible — but a fully qualified name is self-contained, easier to debug in logs, and works without requiring consumers to compose type + source for routing
+- A reverse-DNS prefix avoids collisions in shared broker environments — important for a multi-state blueprint where events may cross organizational boundaries
 - This decision applies blueprint-wide, not just intake
 
 **Options:**
-- **(A)** `gov.safetynets.{domain}.{entity}.{verb}` — e.g., `gov.safetynets.intake.application.submitted`; fully qualified, collision-safe, verbose; works regardless of envelope format
-- **(B)** `{entity}.{verb}` — e.g., `application.submitted`; simpler; relies on a separate envelope field (e.g., CloudEvents `source`) to carry domain context
+- **(A)** ✓ `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — e.g., `org.codeforamerica.safety-net-blueprint.intake.application.submitted`; fully qualified, globally unique, self-contained, consistent with CloudEvents community convention
+- **(B)** `{entity}.{verb}` — e.g., `application.submitted`; simpler; relies on `source` for domain context; requires consumers to compose both fields for routing
 
 ---
 
