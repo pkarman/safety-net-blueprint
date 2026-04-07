@@ -283,7 +283,7 @@ Quick reference — each decision is detailed in the section below.
 | 5 | [Domain events — scope](#decision-5-domain-events--scope) | **Decided: publish as needed** | Both transition and data mutation events are supported. Which specific events to emit is determined per-domain based on integration needs. Schema evolution practices (additive-only payloads, type versioning, canonical schemas in OpenAPI components) govern how events are added over time. |
 | 6 | [Event envelope format](#decision-6-event-envelope-format) | **Decided: A** | CloudEvents 1.0 is transport-agnostic, natively supported by AWS/Azure/GCP, and AsyncAPI-compatible. The envelope schema will be defined in OpenAPI components so it is overlayable and reusable across all domains. |
 | 7 | [Intake phase end — lifecycle state](#decision-7-intake-phase-end--lifecycle-state) | **Decided: C** | Domain autonomy: each domain owns its own state transitions. A `pending_determination` state would exist to serve a downstream domain's needs, not to represent meaningful business state in intake — an event handles that better. Intake signals what it knows (`review_completed`); eligibility publishes what it knows; intake closes the application based on its own logic. |
-| 8 | [Application data mutability and audit trail](#decision-8-application-data-mutability-and-audit-trail) | **Open** | |
+| 8 | [Application data mutability and audit trail](#decision-8-application-data-mutability-and-audit-trail) | **Decided: C** | Audit logic should live once, not be duplicated in every domain. A cross-cutting audit domain subscribing to mutation events enables consistent version history across all domains and cross-domain queries. Mutation events must carry before/after field values or full snapshots to support version reconstruction. |
 | 9 | [submitted → under_review transition trigger](#decision-9-submitted--under_review-transition-trigger) | **Open** | |
 | 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | **Open** | |
 | 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Open** | |
@@ -439,7 +439,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ### Decision 8: Application data mutability and audit trail
 
-**Status:** Open
+**Status:** Decided: C
 
 **What's being decided:** How changes to application data made by caseworkers during `under_review` are tracked — and whether the intake domain owns the audit trail or delegates it.
 
@@ -453,7 +453,7 @@ Arguments for a caseworker-triggered event with no new state:
 **Options:**
 - **(A)** Field-level change tracking in intake — each update records who changed what field, from what value; intake owns the audit trail; duplicated in every other domain that needs auditing
 - **(B)** Version snapshots in intake — each caseworker save creates a full record snapshot; simpler than field-level but coarser; still duplicated across domains
-- **(C)** Cross-cutting audit domain — intake emits mutation events; a dedicated audit domain subscribes and maintains version history across all domains; caseworker history views draw from the audit domain; intake stays simple
+- **(C)** ✓ Cross-cutting audit domain — intake emits mutation events; a dedicated audit domain subscribes and maintains version history across all domains; caseworker history views draw from the audit domain; intake stays simple
 
 ---
 
