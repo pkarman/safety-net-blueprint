@@ -76,7 +76,9 @@ function parseSpecDirs() {
   }
 
   const seedArg = args.find(a => a.startsWith('--seed='));
-  const seedDir = seedArg ? resolve(seedArg.split('=')[1]) : null;
+  const seedDir = seedArg
+    ? resolve(seedArg.split('=')[1])
+    : resolve(import.meta.dirname, '..', 'seed');
 
   return { specDirs, seedDir };
 }
