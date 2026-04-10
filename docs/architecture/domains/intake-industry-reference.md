@@ -582,14 +582,18 @@ Arguments for a caseworker-triggered event with no new state:
 
 **Background:**
 
-ACA regulations (45 CFR § 435.911–435.916) require states to attempt automated eligibility determination for MAGI Medicaid using electronic data sources — SSA income data, IRS tax data, and citizenship/immigration status — via the Federal Data Services Hub (FDSH) before routing to a caseworker. If real-time eligibility (RTE) succeeds, the applicant is auto-approved or auto-denied with no caseworker involvement. Only when RTE is inconclusive or denied does the application route to a caseworker. This automated first-pass runs immediately after submission, before any human has looked at the application.
+Each program has distinct federal requirements that govern whether and when a caseworker must be involved after submission:
 
-SNAP and TANF have no equivalent automated determination. A caseworker must conduct an interview and review documents. SNAP requires caseworker action at submission (with expedited screening within 1 business day for potentially expedited households).
+**SNAP (7 CFR § 273.2):** Caseworker involvement is mandatory. § 273.2(e) requires the agency to conduct an interview with the household before making an eligibility determination — this cannot be bypassed by automated processing. § 273.2(i) requires the agency to determine within 1 business day of application receipt whether the household qualifies for the expedited 7-day track. The 30-day processing clock starts at application receipt. A caseworker intake task must be created immediately at submission; delay risks missing the expedited screening deadline.
+
+**Medicaid/MAGI (45 CFR § 435.911–435.916):** Automated determination is required before caseworker involvement. The ACA (§ 435.911) requires states to attempt real-time eligibility determination using the Federal Data Services Hub (FDSH) — SSA income data, IRS tax data, and citizenship/immigration status via SAVE — before routing to a caseworker. If real-time eligibility (RTE) succeeds, the applicant is auto-approved or auto-denied with no caseworker involvement. Only when RTE is inconclusive or returns a denial does the application require human review. The 45-day processing clock (90 days for disability-based Medicaid) starts at application receipt. Creating a caseworker task before RTE runs is premature — the caseworker task may never be needed.
+
+**TANF (45 CFR Part 261):** Federal requirements are minimal. TANF gives states broad discretion over intake procedures. There is no federal automated determination requirement and no prescribed interview structure. Most states use caseworker-driven intake; specifics are state overlay concerns.
 
 This means routing at `application.submitted` is not uniform across programs:
-- **SNAP** → caseworker intake task immediately
-- **Medicaid (MAGI)** → RTE system first; caseworker involvement only if inconclusive or denied
-- **TANF** → caseworker intake task (state-defined, generally caseworker-driven)
+- **SNAP** → caseworker intake task immediately (interview required; expedited screening deadline starts at submission)
+- **Medicaid (MAGI)** → RTE system first; caseworker involvement only if inconclusive or denied (federal law requires automated determination attempt before human review)
+- **TANF** → caseworker intake task (state-defined; generally caseworker-driven)
 
 **One task per application, not per program:**
 
