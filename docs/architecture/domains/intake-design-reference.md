@@ -1,4 +1,4 @@
-# Intake Domain: Industry Reference
+# Intake Domain: Design Reference
 
 Industry research and design decisions for the intake domain, covering process, regulations, data model, events, and lifecycle. Informed by how major government benefits platforms implement intake for SNAP, Medicaid, TANF, and WIC, and by the federal regulations that govern each program.
 
