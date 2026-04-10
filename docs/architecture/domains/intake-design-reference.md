@@ -26,9 +26,7 @@ The intake domain is responsible for capturing and structuring the data a househ
 
 **What this domain produces:** a structured, verified data record that downstream domains (eligibility, workflow, case management) can act on.
 
-**How vendors structure this:**
-
-All major platforms draw a hard boundary between the *intake phase* (a form-layer data model capturing what the applicant submitted) and the *case management phase* (a typed evidence model linked to registered participant identities). Cúram calls these the IEG Datastore and the Evidence tier. Salesforce separates `IndividualApplication`/`Assessment` objects from `BenefitAssignment`/`ProgramEnrollment`. Pega separates the Application Request case type from downstream program delivery cases. The blueprint follows the same pattern: the intake domain owns the application record; the eligibility and case management domains own what happens after.
+All major platforms draw a hard boundary between the intake phase and the case management phase — the blueprint follows the same pattern: the intake domain owns the application record; eligibility and case management own what happens after.
 
 ---
 
@@ -141,34 +139,18 @@ Based on regulatory requirements and vendor consensus:
 | `withdrawn` | Applicant voluntarily withdrew before determination |
 | `closed` | Processing complete; determination made by eligibility domain |
 
-No vendor tracks the final determination (approved/denied) on the Application itself. That determination lives on the program delivery case or benefit assignment created downstream.
-
 **Implication for the data model:** Application data is mutable during `under_review`. The intake domain must support caseworker-initiated updates to application records, not just the applicant's initial submission. This has audit trail implications — changes made by caseworkers after submission should be distinguishable from the original submitted data. See [Decision 8](#decision-8-application-data-mutability-and-audit-trail).
 
 ### Key transitions
 
 - **submit**: `draft` → `submitted` — applicant files; regulatory clock starts; triggers caseworker task creation and confirmation notice
-- **open**: `submitted` → `under_review` — caseworker begins actively reviewing the application; assignment (routing the application to a worker's queue) may happen separately via the workflow domain and does not necessarily trigger this transition; see [Decision 9](#decision-9-submitted--under_review-transition-trigger)
+- **open**: `submitted` → `under_review` — caseworker begins actively reviewing the application; assignment may happen separately and does not necessarily trigger this transition; see [Decision 9](#decision-9-submitted--under_review-transition-trigger)
 - **withdraw**: `submitted` | `under_review` → `withdrawn` — applicant-initiated; triggers open task cancellation
 - **close**: `under_review` → `closed` — caseworker signals the application is ready for eligibility determination; see [Decision 7](#decision-7-intake-phase-end--lifecycle-state)
 
 ---
 
 ## Domain events
-
-### How vendors approach events
-
-None of the major platforms are purely event-driven in the modern sense. Each has an internal event/notification mechanism but external event consumption varies significantly:
-
-**IBM Cúram:** Uses a JMS-based internal event infrastructure. The `CuramEvent` framework publishes lifecycle events to JMS topics that internal modules can subscribe to. External integrations are primarily done via batch file exchange, SOAP web services, or the newer REST APIs introduced in v8.x — not event streaming. Cúram's evidence framework notifies internal listeners when evidence changes, which is the closest analog to data mutation events. External systems consuming Cúram events directly is uncommon; the typical pattern is Cúram polling or pushing via scheduled batch.
-
-**Salesforce PSS:** The most event-ready of the major vendors. Salesforce Platform Events provide a pub/sub mechanism built into the platform; Change Data Capture (CDC) publishes events when records are created, updated, or deleted. External systems can subscribe via the Streaming API. For government benefits, Platform Events are used for cross-module communication within Salesforce. The event model is proprietary to the Salesforce platform — external consumers must use Salesforce's Streaming API or CometD protocol.
-
-**Pega Government Platform:** Has an internal signals and messaging framework for case-to-case communication. Supports integration with external message brokers (Kafka, JMS) via Data Integration Services. Events are published from cases using "Message Shape" workflow steps. Like Cúram, the primary integration pattern is REST API rather than event streaming for most state implementations.
-
-**General pattern:** These platforms were designed primarily as record-of-system platforms with REST/SOAP APIs as the primary integration surface. Event capabilities exist but are either proprietary (Salesforce Platform Events), infrastructure-dependent (Pega's Kafka integration), or oriented toward internal module communication (Cúram JMS). None natively emit events in a standard format like CloudEvents. States building modern integrations typically poll these systems' APIs or use the vendor's proprietary streaming mechanism.
-
-**Implication for the blueprint:** The blueprint can establish a cleaner event model than any of these vendors by designing for events from the start rather than retrofitting them. The adopted envelope format is CloudEvents 1.0 — see [Decision 6](#decision-6-event-envelope-format).
 
 ### Event types
 
@@ -184,7 +166,7 @@ Events are listed with the operational or regulatory need that drives them — t
 
 | Event | Why it's needed | Trigger | Primary consumers |
 |---|---|---|---|
-| `application.submitted` | Submission starts the regulatory clock (SNAP 30-day, Medicaid 45-day). Downstream domains cannot begin work until they know an application has been filed and when. Workflow creates one intake task per application (not per program) — the task carries the full programs list and per-program status. Programs going through automated processing (Medicaid RTE) are marked accordingly at task creation. Communication sends a confirmation; eligibility begins automated determination for applicable programs. See [Decision 15](#decision-15-post-submission-program-routing--task-creation-and-automated-eligibility) for routing details. | `draft` → `submitted` | Workflow (one intake task, per-program status — see [Decision 15](#decision-15-post-submission-program-routing--task-creation-and-automated-eligibility)), Communication (confirmation notice), Eligibility (RTE for Medicaid) |
+| `application.submitted` | Submission starts the regulatory clock (SNAP 30-day, Medicaid 45-day). Downstream domains cannot begin work until they know an application has been filed and when. See [Decision 15](#decision-15-post-submission-program-routing--task-creation-and-automated-eligibility) for how routing differs by program. | `draft` → `submitted` | Workflow, Communication (confirmation notice), Eligibility (automated determination for applicable programs) |
 | `application.opened` | Signals that a caseworker has begun active review. Workflow needs to update the task state; supervisors tracking queue throughput need to know when review started vs. when it was filed. | `submitted` → `under_review` | Workflow (update task to in_progress) |
 | `application.expedited_flagged` | SNAP requires a determination within 7 days for expedited households. The workflow domain needs to immediately escalate to a higher-priority SLA track — the standard 30-day task SLA is wrong for these cases. This is a named trigger effect, not a generic field update. | `flag-expedited` trigger | Workflow (escalate to expedited SLA) |
 | `application.withdrawn` | A withdrawn application must stop all in-flight processing immediately. Open workflow tasks must be cancelled; any scheduled interview or document request must be voided; communication must notify the household. Failing to act on this event risks processing an application the household has abandoned. | any → `withdrawn` | Workflow (cancel open tasks), Communication (withdrawal notice) |
@@ -314,7 +296,7 @@ Quick reference — each decision is detailed in the section below.
 **What's being decided:** The standard wrapper format for all domain events — the envelope that carries event metadata (id, source, type, timestamp) around the event-specific payload.
 
 **Considerations:**
-- No major government benefits vendor uses CloudEvents — all use proprietary formats (Salesforce Platform Events, Cúram JMS, Pega internal messaging)
+- No major government benefits vendor uses CloudEvents or emits events in a standard format. All are primarily record-of-system platforms: Cúram uses JMS for internal events and batch/SOAP for external integration; Pega uses proprietary signals with optional Kafka via Data Integration Services; Salesforce has the most capable event model (Platform Events, CDC) but it is proprietary and requires Salesforce's Streaming API. None emit in a standard format like CloudEvents. The blueprint can establish a cleaner event model by designing for events from the start rather than retrofitting.
 - AWS EventBridge, Azure Event Grid, and Google Cloud Eventarc all natively support CloudEvents 1.0 — states on cloud infrastructure are already working with it
 - CloudEvents is transport-agnostic — the same envelope works over HTTP webhooks, Kafka, SNS/SQS; state partners can adopt without introducing a message broker
 - CloudEvents is explicitly compatible with AsyncAPI — adopting it now doesn't foreclose that path later
