@@ -91,8 +91,6 @@ The root entity representing one submitted application from a household.
 
 **What it contains across vendors:**
 
-The fields below are highlighted because they are present across all major vendors and because vendors made meaningfully different structural choices about them — differences that directly inform the blueprint's design decisions. Fields where all vendors do the same thing (e.g., a simple string name or address) are omitted since they don't require a decision. The structural differences shown here map to [Decision 2](#decision-2-programs-applied-for--placement) (programs applied for — where does it live?), [Decision 4](#decision-4-authorized-representative--modeling) (authorized representative — role on member or separate reference?), and [Decision 7](#decision-7-intake-phase-end--lifecycle-state) (intake phase end).
-
 | Field | Cúram | Salesforce | Pega | CalSAWS |
 |---|---|---|---|---|
 | Application ID / reference | `CASEHEADER.caseID` | `IndividualApplication.Name` | `pyID` | `applicationID` |
@@ -145,7 +143,7 @@ Every system must represent members who are in the household but not requesting 
 - **Cúram**: `CASEPARTICIPANTROLE` with `participantRoleType = AuthorisedRepresentative` — no separate entity
 - **Pega**: `AuthorizedRepresentativeID` reference on the Application case, pointing to a separate `Person` entity
 
-Salesforce and Cúram model the authorized representative as a *role* on the member junction record. Pega uses a separate reference from the Application entity to a Person record. See [Decision 4](#decision-4-authorized-representative--modeling) for the tradeoffs — the distinction matters because SNAP authorized representatives are by regulation non-household members, which makes the "role on a member" framing conceptually imprecise for that program.
+See [Decision 4](#decision-4-authorized-representative--modeling) for the tradeoffs.
 
 **Key fields present across vendors:**
 
@@ -164,7 +162,7 @@ Which programs is this application or member requesting?
 - **Pega**: `ProgramsApplied` page list on the Application Request case — application-level. Program-specific member eligibility is evaluated by the rules engine using person-level attributes.
 - **CalSAWS**: `programs` list on the Application entity — application-level. Members have `isApplyingForBenefit` boolean but not a per-member, per-program breakdown in the intake record.
 
-**Pattern:** The application-level programs list (what programs this household is applying for) is universal. Per-member, per-program tracking (this specific member is applying for SNAP but not Medicaid) is less standardized — most vendors use a simple boolean on the member rather than a structured per-program sub-object.
+See [Decision 2](#decision-2-programs-applied-for--placement) for placement rationale.
 
 ---
 
@@ -198,7 +196,7 @@ Financial facts collected to support eligibility determination.
 - **Expenses**: household-level for shelter and utilities; per-person for child care, medical (elderly/disabled), court-ordered child support paid. Cúram and Pega model these as typed child entities of `Person` or `Application`. CalSAWS mirrors this.
 - **Assets/Resources**: per-person, typed (`resourceType`: bank account, vehicle, real property, life insurance), with `amount` and `description`
 
-These are well-established sub-entities with consistent structure across vendors. The primary design questions are boundary questions (what level of detail to collect in intake vs. what belongs in ongoing case management) rather than structural ones.
+See [Decision 13](#decision-13-income-and-expense-detail-at-intake) for the design approach.
 
 ---
 
