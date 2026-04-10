@@ -36,7 +36,7 @@ The intake phase spans from filing through caseworker review and data collection
 
 1. **Filing** — applicant submits a minimally complete application; regulatory clock starts; the application enters the caseworker queue for review covering all programs applied for
 2. **Confirmation notice** — the agency sends an acknowledgment to the household confirming receipt of the application and the filing date; many states are required to provide this notice
-3. **Identity matching** — the agency attempts to match the applicant and household members to existing person records to prevent duplicate records and link to prior application history; see [Decision 12](#decision-12-person-identity-matching)
+3. **Identity matching** — the agency attempts to match the applicant and household members to existing person records to prevent duplicate records and link to prior application history; see [Decision 10](#decision-10-person-identity-matching)
 4. **Queue assignment and routing** — the application is routed to the appropriate caseworker based on program type, geography, workload, or other agency-configured rules
 5. **Automated eligibility determination (Medicaid)** — for MAGI Medicaid, the agency immediately attempts real-time eligibility (RTE) via the Federal Data Services Hub (FDSH) using SSA income data, IRS tax data, and citizenship/immigration status; if RTE succeeds, Medicaid is auto-approved or auto-denied with no caseworker involvement; if inconclusive, Medicaid proceeds to caseworker review; this runs before any caseworker action (45 CFR § 435.911–435.916)
 6. **Electronic data source checks** — in parallel with or shortly after filing, the agency queries electronic data sources to pre-populate or verify applicant-reported data: IEVS/The Work Number for income and employment, SAVE for immigration and citizenship status, SSA for disability and benefit receipt; results inform the caseworker's review but do not replace it
@@ -89,7 +89,7 @@ The root entity representing one submitted application from a household. All maj
 
 **Key fields:** `id`, `status`, `programs`, `channel`, `submittedAt`, `withdrawnAt`, `closedAt`, `createdAt`, `updatedAt`
 
-See [Decision 2](#decision-2-programs-applied-for--placement), [Decision 4](#decision-4-authorized-representative--modeling), [Decision 7](#decision-7-intake-phase-end--lifecycle-state).
+See [Decision 2](#decision-2-programs-applied-for--placement), [Decision 4](#decision-4-authorized-representative--modeling), [Decision 6](#decision-6-intake-phase-end--lifecycle-state).
 
 ---
 
@@ -101,7 +101,7 @@ SNAP requires all household members to be listed regardless of whether they are 
 
 **Key fields:** `firstName`, `lastName`, `dateOfBirth`, `gender`, `SSN`, `relationship`, `roles`, `programsApplyingFor`, `resolvedPersonId`
 
-See [Decision 1](#decision-1-role-vs-relationship-on-applicationmember), [Decision 2](#decision-2-programs-applied-for--placement), [Decision 4](#decision-4-authorized-representative--modeling), [Decision 12](#decision-12-person-identity-matching).
+See [Decision 1](#decision-1-role-vs-relationship-on-applicationmember), [Decision 2](#decision-2-programs-applied-for--placement), [Decision 4](#decision-4-authorized-representative--modeling), [Decision 10](#decision-10-person-identity-matching).
 
 ---
 
@@ -109,7 +109,7 @@ See [Decision 1](#decision-1-role-vs-relationship-on-applicationmember), [Decisi
 
 Facts about a household member relevant to eligibility determination — citizenship status, immigration status, pregnancy, student status, disability, tax filing status. All are flat fields on `ApplicationMember`. See [Decision 3](#decision-3-program-specific-eligibility-attributes--structure).
 
-**Tax filing status (MAGI Medicaid):** MAGI Medicaid determines eligibility based on tax filing status and dependency relationships, not physical household membership. This requires fields not needed for SNAP-only applications: `taxFilingStatus`, `claimedAsDependentBy`, `expectToFileTaxes`, `marriedFilingJointly`. See [Decision 14](#decision-14-magi-tax-filing-status-fields).
+**Tax filing status (MAGI Medicaid):** MAGI Medicaid determines eligibility based on tax filing status and dependency relationships, not physical household membership. This requires fields not needed for SNAP-only applications: `taxFilingStatus`, `claimedAsDependentBy`, `expectToFileTaxes`, `marriedFilingJointly`. See [Decision 12](#decision-12-magi-tax-filing-status-fields).
 
 ---
 
@@ -121,7 +121,7 @@ Financial facts collected to support eligibility determination.
 - **Expenses**: household-level for shelter and utilities; per-person for child care, medical (elderly/disabled), court-ordered child support paid
 - **Assets**: per-person, by type (bank account, vehicle, real property, life insurance) with `amount` and `description`
 
-See [Decision 13](#decision-13-income-and-expense-detail-at-intake).
+See [Decision 11](#decision-11-income-and-expense-detail-at-intake).
 
 ---
 
@@ -139,14 +139,14 @@ Based on regulatory requirements and vendor consensus:
 | `withdrawn` | Applicant voluntarily withdrew before determination |
 | `closed` | Processing complete; determination made by eligibility domain |
 
-**Implication for the data model:** Application data is mutable during `under_review`. The intake domain must support caseworker-initiated updates to application records, not just the applicant's initial submission. This has audit trail implications — changes made by caseworkers after submission should be distinguishable from the original submitted data. See [Decision 8](#decision-8-application-data-mutability-and-audit-trail).
+**Implication for the data model:** Application data is mutable during `under_review`. The intake domain must support caseworker-initiated updates to application records, not just the applicant's initial submission. This has audit trail implications — changes made by caseworkers after submission should be distinguishable from the original submitted data. See [Decision 7](#decision-7-application-data-mutability-and-audit-trail).
 
 ### Key transitions
 
 - **submit**: `draft` → `submitted` — applicant files; regulatory clock starts; triggers caseworker task creation and confirmation notice
-- **open**: `submitted` → `under_review` — caseworker begins actively reviewing the application; assignment may happen separately and does not necessarily trigger this transition; see [Decision 9](#decision-9-submitted--under_review-transition-trigger)
+- **open**: `submitted` → `under_review` — caseworker begins actively reviewing the application; assignment may happen separately and does not necessarily trigger this transition; see [Decision 8](#decision-8-submitted--under_review-transition-trigger)
 - **withdraw**: `submitted` | `under_review` → `withdrawn` — applicant-initiated; triggers open task cancellation
-- **close**: `under_review` → `closed` — caseworker signals the application is ready for eligibility determination; see [Decision 7](#decision-7-intake-phase-end--lifecycle-state)
+- **close**: `under_review` → `closed` — caseworker signals the application is ready for eligibility determination; see [Decision 6](#decision-6-intake-phase-end--lifecycle-state)
 
 ---
 
@@ -166,7 +166,7 @@ Events are listed with the operational or regulatory need that drives them — t
 
 | Event | Why it's needed | Trigger | Primary consumers |
 |---|---|---|---|
-| `application.submitted` | Submission starts the regulatory clock (SNAP 30-day, Medicaid 45-day). Downstream domains cannot begin work until they know an application has been filed and when. See [Decision 15](#decision-15-post-submission-program-routing--task-creation-and-automated-eligibility) for how routing differs by program. | `draft` → `submitted` | Workflow, Communication (confirmation notice), Eligibility (automated determination for applicable programs) |
+| `application.submitted` | Submission starts the regulatory clock (SNAP 30-day, Medicaid 45-day). Downstream domains cannot begin work until they know an application has been filed and when. See [Decision 13](#decision-13-post-submission-program-routing--task-creation-and-automated-eligibility) for how routing differs by program. | `draft` → `submitted` | Workflow, Communication (confirmation notice), Eligibility (automated determination for applicable programs) |
 | `application.opened` | Signals that a caseworker has begun active review. Workflow needs to update the task state; supervisors tracking queue throughput need to know when review started vs. when it was filed. | `submitted` → `under_review` | Workflow (update task to in_progress) |
 | `application.expedited_flagged` | SNAP requires a determination within 7 days for expedited households. The workflow domain needs to immediately escalate to a higher-priority SLA track — the standard 30-day task SLA is wrong for these cases. This is a named trigger effect, not a generic field update. | `flag-expedited` trigger | Workflow (escalate to expedited SLA) |
 | `application.withdrawn` | A withdrawn application must stop all in-flight processing immediately. Open workflow tasks must be cancelled; any scheduled interview or document request must be voided; communication must notify the household. Failing to act on this event risks processing an application the household has abandoned. | any → `withdrawn` | Workflow (cancel open tasks), Communication (withdrawal notice) |
@@ -185,16 +185,14 @@ Quick reference — each decision is detailed in the section below.
 | 3 | [Program-specific eligibility attributes — structure](#decision-3-program-specific-eligibility-attributes--structure) | Flat facts on ApplicationMember — person facts don't change per program. |
 | 4 | [Authorized representative — modeling](#decision-4-authorized-representative--modeling) | `roles` array on ApplicationMember — supports multiple simultaneous roles. |
 | 5 | [Domain events — scope](#decision-5-domain-events--scope) | Both lifecycle and resource events; specific events determined per-domain. |
-| 6 | [Event envelope format](#decision-6-event-envelope-format) | CloudEvents 1.0 — transport-agnostic, cloud-native, AsyncAPI-compatible. |
-| 7 | [Intake phase end — lifecycle state](#decision-7-intake-phase-end--lifecycle-state) | Caseworker-triggered event, no new state — each domain owns its own transitions. |
-| 8 | [Application data mutability and audit trail](#decision-8-application-data-mutability-and-audit-trail) | Cross-cutting audit domain — audit logic lives once, not duplicated per domain. |
-| 9 | [submitted → under_review transition trigger](#decision-9-submitted--under_review-transition-trigger) | Intake subscribes to `task.claimed` — one caseworker action triggers both domains. |
-| 10 | [Event type naming convention](#decision-10-event-type-naming-convention) | `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — fully qualified, collision-safe. |
-| 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | Relationship to primary applicant only — sufficient for SNAP and most MAGI cases; full pairwise matrix is a known gap. |
-| 12 | [Person identity matching](#decision-12-person-identity-matching) | Matching triggered at submission; synchronous vs. asynchronous is an implementation choice. |
-| 13 | [Income and expense detail at intake](#decision-13-income-and-expense-detail-at-intake) | Full schema, only gross income required — implementations decide how much detail to collect. |
-| 14 | [MAGI tax filing status fields](#decision-14-magi-tax-filing-status-fields) | Flat fields in the baseline — required by the MAGI household composition logic from [Decision 11](#decision-11-member-to-member-relationship-matrix-magi). |
-| 15 | [Post-submission program routing — task creation and automated eligibility](#decision-15-post-submission-program-routing--task-creation-and-automated-eligibility) | One intake task per application with per-program status — programs under automated processing marked at task creation. |
+| 6 | [Intake phase end — lifecycle state](#decision-6-intake-phase-end--lifecycle-state) | Caseworker-triggered event, no new state — each domain owns its own transitions. |
+| 7 | [Application data mutability and audit trail](#decision-7-application-data-mutability-and-audit-trail) | Cross-cutting audit domain — audit logic lives once, not duplicated per domain. |
+| 8 | [submitted → under_review transition trigger](#decision-8-submitted--under_review-transition-trigger) | Intake subscribes to `task.claimed` — one caseworker action triggers both domains. |
+| 9 | [Member-to-member relationship matrix (MAGI)](#decision-9-member-to-member-relationship-matrix-magi) | Relationship to primary applicant only — sufficient for SNAP and most MAGI cases; full pairwise matrix is a known gap. |
+| 10 | [Person identity matching](#decision-10-person-identity-matching) | Matching triggered at submission; synchronous vs. asynchronous is an implementation choice. |
+| 11 | [Income and expense detail at intake](#decision-11-income-and-expense-detail-at-intake) | Full schema, only gross income required — implementations decide how much detail to collect. |
+| 12 | [MAGI tax filing status fields](#decision-12-magi-tax-filing-status-fields) | Flat fields in the baseline — required by the MAGI household composition logic from [Decision 9](#decision-9-member-to-member-relationship-matrix-magi). |
+| 13 | [Post-submission program routing — task creation and automated eligibility](#decision-13-post-submission-program-routing--task-creation-and-automated-eligibility) | One intake task per application with per-program status — programs under automated processing marked at task creation. |
 
 ---
 
@@ -289,27 +287,7 @@ Quick reference — each decision is detailed in the section below.
 
 ---
 
-### Decision 6: Event envelope format
-
-**Status:** Decided: A
-
-**What's being decided:** The standard wrapper format for all domain events — the envelope that carries event metadata (id, source, type, timestamp) around the event-specific payload.
-
-**Considerations:**
-- No major government benefits vendor uses CloudEvents or emits events in a standard format. All are primarily record-of-system platforms: Cúram uses JMS for internal events and batch/SOAP for external integration; Pega uses proprietary signals with optional Kafka via Data Integration Services; Salesforce has the most capable event model (Platform Events, CDC) but it is proprietary and requires Salesforce's Streaming API. None emit in a standard format like CloudEvents. The blueprint can establish a cleaner event model by designing for events from the start rather than retrofitting.
-- AWS EventBridge, Azure Event Grid, and Google Cloud Eventarc all natively support CloudEvents 1.0 — states on cloud infrastructure are already working with it
-- CloudEvents is transport-agnostic — the same envelope works over HTTP webhooks, Kafka, SNS/SQS; state partners can adopt without introducing a message broker
-- CloudEvents is explicitly compatible with AsyncAPI — adopting it now doesn't foreclose that path later
-- A custom envelope has no tooling ecosystem and creates migration cost if standards adoption grows
-
-**Options:**
-- **(A)** ✓ CloudEvents 1.0 — CNCF standard, transport-agnostic, cloud-native ecosystem support, AsyncAPI-compatible, SDKs in most languages; envelope schema defined in OpenAPI components for reuse and overlayability
-- **(B)** Custom blueprint envelope — full control, no external dependency, no tooling ecosystem
-- **(C)** No standard envelope — each domain defines its own payload shape
-
----
-
-### Decision 7: Intake phase end — lifecycle state
+### Decision 6: Intake phase end — lifecycle state
 
 **Status:** Decided: C
 
@@ -342,7 +320,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ---
 
-### Decision 8: Application data mutability and audit trail
+### Decision 7: Application data mutability and audit trail
 
 **Status:** Decided: C
 
@@ -362,7 +340,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ---
 
-### Decision 9: submitted → under_review transition trigger
+### Decision 8: submitted → under_review transition trigger
 
 **Status:** Decided: B
 
@@ -370,7 +348,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 **Considerations:**
 - All major vendors handle this within a single system — the intake/case system and the task/workflow system are one; the cross-domain question doesn't arise. The blueprint separates them.
-- The event-driven approach is consistent with [Decision 7](#decision-7-intake-phase-end--lifecycle-state): intake owns its own state transitions but reacts to events from other domains. Subscribing to `task.claimed` is not tight coupling — intake still decides to transition itself; the event is the trigger.
+- The event-driven approach is consistent with [Decision 6](#decision-6-intake-phase-end--lifecycle-state): intake owns its own state transitions but reacts to events from other domains. Subscribing to `task.claimed` is not tight coupling — intake still decides to transition itself; the event is the trigger.
 - The explicit-action approach requires the caseworker (or the UI) to make two calls — claim the task in workflow, then separately open the application in intake. The event-driven approach reduces this to one caseworker action.
 - Assignment (routing to a queue) and opening (caseworker begins review) may be two distinct moments — the task `claim` event maps to opening, not just assignment
 
@@ -380,26 +358,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ---
 
-### Decision 10: Event type naming convention
-
-**Status:** Decided: A
-
-**What's being decided:** The naming format for the event type identifier — a load-bearing decision since consumers filter and route on type names, and renaming is a breaking change.
-
-**Considerations:**
-- No major vendor uses a standard naming convention — all use proprietary formats (Salesforce Platform Event names, Pega signal names, Cúram event codes)
-- Once consumers depend on a type name, renaming is a breaking change for all subscribers
-- CloudEvents was adopted ([Decision 6](#decision-6-event-envelope-format)); the `source` field carries domain context, so a shorter type name is possible — but a fully qualified name is self-contained, easier to debug in logs, and works without requiring consumers to compose type + source for routing
-- A reverse-DNS prefix avoids collisions in shared broker environments — important for a multi-state blueprint where events may cross organizational boundaries
-- This decision applies blueprint-wide, not just intake
-
-**Options:**
-- **(A)** ✓ `org.codeforamerica.safety-net-blueprint.{domain}.{entity}.{verb}` — e.g., `org.codeforamerica.safety-net-blueprint.intake.application.submitted`; fully qualified, globally unique, self-contained, consistent with CloudEvents community convention
-- **(B)** `{entity}.{verb}` — e.g., `application.submitted`; simpler; relies on `source` for domain context; requires consumers to compose both fields for routing
-
----
-
-### Decision 11: Member-to-member relationship matrix (MAGI)
+### Decision 9: Member-to-member relationship matrix (MAGI)
 
 **Status:** Decided: A
 
@@ -420,7 +379,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ---
 
-### Decision 12: Person identity matching
+### Decision 10: Person identity matching
 
 **Status:** Decided
 
@@ -436,7 +395,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ---
 
-### Decision 13: Income and expense detail at intake
+### Decision 11: Income and expense detail at intake
 
 **Status:** Decided: D
 
@@ -459,7 +418,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ---
 
-### Decision 14: MAGI tax filing status fields
+### Decision 12: MAGI tax filing status fields
 
 **Status:** Decided: A
 
@@ -470,7 +429,7 @@ Arguments for a caseworker-triggered event with no new state:
 - These fields are only needed when Medicaid eligibility is in scope — a SNAP-only implementation has no use for them
 - Baseline inclusion ensures any state adding Medicaid doesn't need to overlay the schema first — the fields are there and left empty for non-Medicaid cases
 - Omitting from baseline keeps the schema leaner, but risks states adding in inconsistent ways (different names, types, or structure) across implementations
-- The MAGI household composition logic from [Decision 11](#decision-11-member-to-member-relationship-matrix-magi) depends on `claimedAsDependentBy` and tax filing status fields — omitting them from the baseline would leave that logic without the fields it requires
+- The MAGI household composition logic from [Decision 9](#decision-9-member-to-member-relationship-matrix-magi) depends on `claimedAsDependentBy` and tax filing status fields — omitting them from the baseline would leave that logic without the fields it requires
 
 **Options:**
 - **(A)** Flat fields on ApplicationMember in the baseline — consistent with MAGI-in-the-Cloud and CalSAWS; multi-program-ready out of the box; adds fields irrelevant to SNAP-only states
@@ -479,7 +438,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 **Decision:** Option A. The MAGI household composition approach (Decision 11) already depends on `claimedAsDependentBy` and tax filing status fields in the baseline. Flat fields on `ApplicationMember` are consistent with MAGI-in-the-Cloud and CalSAWS. States without Medicaid leave them empty.
 
-### Decision 15: Post-submission program routing — task creation and automated eligibility
+### Decision 13: Post-submission program routing — task creation and automated eligibility
 
 **Status:** Decided: B
 
