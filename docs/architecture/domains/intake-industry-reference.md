@@ -91,7 +91,7 @@ The root entity representing one submitted application from a household.
 
 **What it contains across vendors:**
 
-The fields below are highlighted because they are present across all major vendors and because vendors made meaningfully different structural choices about them — differences that directly inform the blueprint's design decisions. Fields where all vendors do the same thing (e.g., a simple string name or address) are omitted since they don't require a decision. The structural differences shown here map to Decision 2 (programs applied for — where does it live?), Decision 4 (authorized representative — role on member or separate reference?), and Decision 8 (intake phase end — is status enough to signal the handoff to eligibility?).
+The fields below are highlighted because they are present across all major vendors and because vendors made meaningfully different structural choices about them — differences that directly inform the blueprint's design decisions. Fields where all vendors do the same thing (e.g., a simple string name or address) are omitted since they don't require a decision. The structural differences shown here map to [Decision 2](#decision-2-programs-applied-for--placement) (programs applied for — where does it live?), [Decision 4](#decision-4-authorized-representative--modeling) (authorized representative — role on member or separate reference?), and [Decision 7](#decision-7-intake-phase-end--lifecycle-state) (intake phase end).
 
 | Field | Cúram | Salesforce | Pega | CalSAWS |
 |---|---|---|---|---|
@@ -224,14 +224,14 @@ Based on regulatory requirements and vendor consensus:
 
 No vendor tracks the final determination (approved/denied) on the Application itself. That determination lives on the program delivery case or benefit assignment created downstream.
 
-**Implication for the data model:** Application data is mutable during `under_review`. The intake domain must support caseworker-initiated updates to application records, not just the applicant's initial submission. This has audit trail implications — changes made by caseworkers after submission should be distinguishable from the original submitted data. See [Decision 9](#decision-9-submitted--under_review-transition-trigger).
+**Implication for the data model:** Application data is mutable during `under_review`. The intake domain must support caseworker-initiated updates to application records, not just the applicant's initial submission. This has audit trail implications — changes made by caseworkers after submission should be distinguishable from the original submitted data. See [Decision 8](#decision-8-application-data-mutability-and-audit-trail).
 
 ### Key transitions
 
 - **submit**: `draft` → `submitted` — applicant files; regulatory clock starts; triggers caseworker task creation and confirmation notice
-- **open**: `submitted` → `under_review` — caseworker begins actively reviewing the application; assignment (routing the application to a worker's queue) may happen separately via the workflow domain and does not necessarily trigger this transition; see [Decision 10](#decision-10-event-type-naming-convention)
+- **open**: `submitted` → `under_review` — caseworker begins actively reviewing the application; assignment (routing the application to a worker's queue) may happen separately via the workflow domain and does not necessarily trigger this transition; see [Decision 9](#decision-9-submitted--under_review-transition-trigger)
 - **withdraw**: `submitted` | `under_review` → `withdrawn` — applicant-initiated; triggers open task cancellation
-- **close**: `under_review` → `closed` — caseworker signals the application is ready for eligibility determination; see [Decision 8](#decision-8-application-data-mutability-and-audit-trail)
+- **close**: `under_review` → `closed` — caseworker signals the application is ready for eligibility determination; see [Decision 7](#decision-7-intake-phase-end--lifecycle-state)
 
 ---
 
@@ -292,7 +292,8 @@ Quick reference — each decision is detailed in the section below.
 | 11 | [Member-to-member relationship matrix (MAGI)](#decision-11-member-to-member-relationship-matrix-magi) | **Decided: A** | The `claimedAsDependentBy` and tax filing status fields cover the vast majority of MAGI household composition cases. The pairwise matrix only adds precision for the edge case where a non-primary adult is a parent of a child who isn't explicitly claimed as a dependent — that case is a known gap not covered by the baseline. |
 | 12 | [Person identity matching](#decision-12-person-identity-matching) | **Decided** | Identity matching is triggered at submission. The result is stored as `resolvedPersonId` on ApplicationMember. Whether the implementation is synchronous or asynchronous is left to the implementor — the contract is the same either way. |
 | 13 | [Income and expense detail at intake](#decision-13-income-and-expense-detail-at-intake) | **Decided: D** | Full income schema in the contract; only gross income required at submission (SNAP expedited screening minimum). All other detail is optional. Implementations decide how much the intake form collects — the contract does not constrain that choice. |
-| 14 | [MAGI tax filing status fields](#decision-14-magi-tax-filing-status-fields) | **Decided: A** | The tax filing status fields are required by the MAGI household composition logic decided in Decision 11. Omitting them from the baseline would leave that logic without the fields it depends on. Flat fields on ApplicationMember — consistent with MAGI-in-the-Cloud and CalSAWS. |
+| 14 | [MAGI tax filing status fields](#decision-14-magi-tax-filing-status-fields) | **Decided: A** | The tax filing status fields are required by the MAGI household composition logic decided in [Decision 11](#decision-11-member-to-member-relationship-matrix-magi). Omitting them from the baseline would leave that logic without the fields it depends on. Flat fields on ApplicationMember — consistent with MAGI-in-the-Cloud and CalSAWS. |
+| 15 | [Post-submission program routing — task creation and automated eligibility](#decision-15-post-submission-program-routing--task-creation-and-automated-eligibility) | **Decided: B** | One intake task per application covers all programs. Per-program status at task creation communicates automated processing (Medicaid RTE) without requiring a separate eligibility event. |
 
 ---
 
@@ -309,7 +310,7 @@ Quick reference — each decision is detailed in the section below.
 
 **Options:**
 - **(A)** Single `relationship` field encoding both application role and family relationship
-- **(B)** ✓ Separate `role` field (application process role: primary_applicant, household_member, non_applying_member, authorized_representative, absent_parent) and `relationship` field (family relationship to primary applicant: spouse, child, parent, etc.). Note: Decision 4 extends this to a `roles` array to support multiple simultaneous roles.
+- **(B)** ✓ Separate `role` field (application process role: primary_applicant, household_member, non_applying_member, authorized_representative, absent_parent) and `relationship` field (family relationship to primary applicant: spouse, child, parent, etc.). Note: [Decision 4](#decision-4-authorized-representative--modeling) extends this to a `roles` array to support multiple simultaneous roles.
 
 ---
 
@@ -343,7 +344,7 @@ Quick reference — each decision is detailed in the section below.
 - No major vendor nests eligibility attributes per-program at intake — Cúram, Pega, MAGI-in-the-Cloud, CMS Marketplace, and CalSAWS all use flat facts on the member entity
 - These are facts about the person, not the program: citizenship status doesn't change depending on which program is being applied for; the same fact is evaluated independently by each program's rules
 - Per-program nesting would duplicate data (same citizenship status entered once per program) and complicate data entry
-- The one genuinely per-program attribute is which programs the member is applying for — handled separately in Decision 2
+- The one genuinely per-program attribute is which programs the member is applying for — handled separately in [Decision 2](#decision-2-programs-applied-for--placement)
 
 **Options:**
 - **(A)** ✓ Flat on ApplicationMember — citizenship, immigration status, pregnancy, student status, disability as direct fields; consistent with all major vendors
@@ -468,7 +469,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 **Considerations:**
 - All major vendors handle this within a single system — the intake/case system and the task/workflow system are one; the cross-domain question doesn't arise. The blueprint separates them.
-- The event-driven approach is consistent with Decision 7: intake owns its own state transitions but reacts to events from other domains. Subscribing to `task.claimed` is not tight coupling — intake still decides to transition itself; the event is the trigger.
+- The event-driven approach is consistent with [Decision 7](#decision-7-intake-phase-end--lifecycle-state): intake owns its own state transitions but reacts to events from other domains. Subscribing to `task.claimed` is not tight coupling — intake still decides to transition itself; the event is the trigger.
 - The explicit-action approach requires the caseworker (or the UI) to make two calls — claim the task in workflow, then separately open the application in intake. The event-driven approach reduces this to one caseworker action.
 - Assignment (routing to a queue) and opening (caseworker begins review) may be two distinct moments — the task `claim` event maps to opening, not just assignment
 
@@ -487,7 +488,7 @@ Arguments for a caseworker-triggered event with no new state:
 **Considerations:**
 - No major vendor uses a standard naming convention — all use proprietary formats (Salesforce Platform Event names, Pega signal names, Cúram event codes)
 - Once consumers depend on a type name, renaming is a breaking change for all subscribers
-- CloudEvents was adopted (Decision 6); the `source` field carries domain context, so a shorter type name is possible — but a fully qualified name is self-contained, easier to debug in logs, and works without requiring consumers to compose type + source for routing
+- CloudEvents was adopted ([Decision 6](#decision-6-event-envelope-format)); the `source` field carries domain context, so a shorter type name is possible — but a fully qualified name is self-contained, easier to debug in logs, and works without requiring consumers to compose type + source for routing
 - A reverse-DNS prefix avoids collisions in shared broker environments — important for a multi-state blueprint where events may cross organizational boundaries
 - This decision applies blueprint-wide, not just intake
 
@@ -568,7 +569,7 @@ Arguments for a caseworker-triggered event with no new state:
 - These fields are only needed when Medicaid eligibility is in scope — a SNAP-only implementation has no use for them
 - Baseline inclusion ensures any state adding Medicaid doesn't need to overlay the schema first — the fields are there and left empty for non-Medicaid cases
 - Omitting from baseline keeps the schema leaner, but risks states adding in inconsistent ways (different names, types, or structure) across implementations
-- The MAGI household composition logic from Decision 11 depends on `claimedAsDependentBy` and tax filing status fields — omitting them from the baseline would leave that logic without the fields it requires
+- The MAGI household composition logic from [Decision 11](#decision-11-member-to-member-relationship-matrix-magi) depends on `claimedAsDependentBy` and tax filing status fields — omitting them from the baseline would leave that logic without the fields it requires
 
 **Options:**
 - **(A)** Flat fields on ApplicationMember in the baseline — consistent with MAGI-in-the-Cloud and CalSAWS; multi-program-ready out of the box; adds fields irrelevant to SNAP-only states
@@ -579,7 +580,7 @@ Arguments for a caseworker-triggered event with no new state:
 
 ### Decision 15: Post-submission program routing — task creation and automated eligibility
 
-**Status:** Decided: B (task structure); open questions noted for #163
+**Status:** Decided: B
 
 **What's being decided:** When `application.submitted` fires, what happens for each program in the application? Specifically: does every program generate a caseworker task immediately, or does routing depend on program type? And if multiple programs are on one application, how many tasks are created?
 
