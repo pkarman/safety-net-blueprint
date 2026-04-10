@@ -87,102 +87,31 @@ Federal law sets maximum processing timelines that begin at application receipt 
 
 ### Application
 
-The root entity representing one submitted application from a household.
+The root entity representing one submitted application from a household. All major platforms have an equivalent concept — an application-scoped record that is distinct from the downstream case or benefit assignment. No platform tracks the final determination (approved/denied) on the application itself; that lives on the program delivery case created after eligibility determination.
 
-**What it contains across vendors:**
+**Key fields:** `id`, `status`, `programs`, `channel`, `submittedAt`, `withdrawnAt`, `closedAt`, `createdAt`, `updatedAt`
 
-| Field | Cúram | Salesforce | Pega | CalSAWS |
-|---|---|---|---|---|
-| Application ID / reference | `CASEHEADER.caseID` | `IndividualApplication.Name` | `pyID` | `applicationID` |
-| Submission date | `APPLICATIONCASE.applicationDate` | `IndividualApplication.SubmittedDate` | `SubmittedDate` | `submittedDate` |
-| Channel | `APPLICATIONCASE.submissionChannel` | — | `ApplicationChannel` | `applicationChannel` |
-| Status | `CASEHEADER.caseStatus` | `IndividualApplication.Status` | `pyStatus` | `status` |
-| Programs applied for | `BenefitTypeList` (IEG child entity) | `BenefitId` (single) or per-participant | `ProgramsApplied` (page list) | `programs` (list) |
-| Primary applicant | `CASEPARTICIPANTROLE` (Primary Client role) | `AccountId` on `IndividualApplication` | `ApplicantID` | `primaryApplicantID` |
-| Authorized representative flag | `authorizedRepresentativeIndicator` (IEG) | `PublicApplicationParticipant` (role) | `AuthorizedRepresentativeID` | — |
-
-**Lifecycle states across vendors:**
-
-Cúram: Draft → Submitted → In Review → Approved / Denied / Withdrawn
-Salesforce: Draft → Submitted → Under Review → Approved / Denied / Withdrawn
-Pega: Open (Intake) → Open (Eligibility) → Open (Review) → Resolved-Approved / Resolved-Denied
-CalSAWS: mirrors Cúram's model, with program-specific sub-statuses
-
-All vendors agree on the same essential arc. No vendor tracks a final determination (approved/denied) on the Application itself — that determination lives on the program delivery case or benefit assignment. The Application reaches a terminal state of `closed` (determination made downstream) or `withdrawn`.
+See [Decision 2](#decision-2-programs-applied-for--placement), [Decision 4](#decision-4-authorized-representative--modeling), [Decision 7](#decision-7-intake-phase-end--lifecycle-state).
 
 ---
 
 ### ApplicationMember
 
-A person linked to an application. May be the primary applicant, a household member applying for benefits, a household member counted but not applying, or an authorized representative.
+A person linked to an application. May be the primary applicant, a household member applying for benefits, a household member counted but not applying, or an authorized representative. All major platforms have an equivalent member/participant record linked to the application.
 
-**What vendors call this entity:**
+SNAP requires all household members to be listed regardless of whether they are individually applying (7 CFR § 273.1).
 
-| System | Entity name | How linked to Application |
-|---|---|---|
-| Cúram (IEG phase) | `Person` (child of `Application` datastore) | Parent–child in IEG datastore |
-| Cúram (backend) | `CASEPARTICIPANTROLE` + `PERSON`/`PROSPECTPERSON` | Join table on `CASEHEADER` |
-| Salesforce | `PublicApplicationParticipant` | Junction: `IndividualApplication` ↔ Account/Contact |
-| Pega | `HouseholdMember` entry in `Household.HouseholdMembers` | Embedded page list on `Household` entity |
-| CalSAWS | `HouseholdMember` | Child of Application |
-| MAGI-in-the-Cloud | `applicant` | Array on submission payload |
+**Key fields:** `firstName`, `lastName`, `dateOfBirth`, `gender`, `SSN`, `relationship`, `roles`, `programsApplyingFor`, `resolvedPersonId`
 
-**How the applying vs. not-applying distinction is modeled:**
-
-Every system must represent members who are in the household but not requesting benefits — SNAP requires all household members to be listed regardless of whether they are individually applying. All vendors solve this, but differently:
-
-- **Pega**: `IsApplyingForBenefit` boolean on the `HouseholdMember` entry
-- **Salesforce**: `ParticipantRole` picklist on `PublicApplicationParticipant` — values include `Applicant`, `Co-Applicant`, `Household Member` (not applying)
-- **Cúram**: `participantRoleType` codetable on `CASEPARTICIPANTROLE` — values include `Primary Client`, `Member`, `Counted Non-Applicant`
-- **MAGI-in-the-Cloud**: `is_applicant` boolean on the `applicant` object
-- **CMS Marketplace API**: `has_mec` boolean (has existing coverage) and relationship field distinguish members from the primary enrollee
-
-**How the authorized representative is modeled:**
-
-- **Salesforce**: `PublicApplicationParticipant` with `ParticipantRole = Authorized Representative` — no separate entity
-- **Cúram**: `CASEPARTICIPANTROLE` with `participantRoleType = AuthorisedRepresentative` — no separate entity
-- **Pega**: `AuthorizedRepresentativeID` reference on the Application case, pointing to a separate `Person` entity
-
-See [Decision 4](#decision-4-authorized-representative--modeling) for the tradeoffs.
-
-**Key fields present across vendors:**
-
-`firstName`, `lastName`, `dateOfBirth`, `gender`, `SSN`, `relationship to primary applicant`, `role / participantRoleType`, `isApplyingForBenefit` (or equivalent)
-
----
-
-### Programs applied for
-
-Which programs is this application or member requesting?
-
-**Where vendors place this:**
-
-- **Cúram**: `BenefitTypeList` as a child entity of `Application` in the IEG datastore — application-level. On the member side, a `Person` entity carries a `isApplyingForBenefit` flag but not a per-program breakdown.
-- **Salesforce**: `BenefitId` on `IndividualApplication` for single-benefit apps; for multi-benefit, a separate `IndividualApplication` is created per benefit, or `PublicApplicationParticipant` records are created per benefit per participant.
-- **Pega**: `ProgramsApplied` page list on the Application Request case — application-level. Program-specific member eligibility is evaluated by the rules engine using person-level attributes.
-- **CalSAWS**: `programs` list on the Application entity — application-level. Members have `isApplyingForBenefit` boolean but not a per-member, per-program breakdown in the intake record.
-
-See [Decision 2](#decision-2-programs-applied-for--placement) for placement rationale.
+See [Decision 1](#decision-1-role-vs-relationship-on-applicationmember), [Decision 2](#decision-2-programs-applied-for--placement), [Decision 4](#decision-4-authorized-representative--modeling), [Decision 12](#decision-12-person-identity-matching).
 
 ---
 
 ### Program-specific eligibility attributes
 
-Facts about a household member that are relevant to eligibility determination — citizenship status, immigration status, pregnancy, student status, disability, tax filing status.
+Facts about a household member relevant to eligibility determination — citizenship status, immigration status, pregnancy, student status, disability, tax filing status. All are flat fields on `ApplicationMember`. See [Decision 3](#decision-3-program-specific-eligibility-attributes--structure).
 
-**Where vendors place these:**
-
-All major vendors use flat fields on the person/member entity. See [Decision 3](#decision-3-program-specific-eligibility-attributes--structure) for the rationale.
-
-- **Cúram**: `CitizenshipStatus` child entity of `Person` in IEG (fields: `citizenshipCategory`, `immigrationStatus`, `alienRegistrationNumber`, `dateOfEntry`). Pregnancy, disability as flat attributes on `Person`. Tax filing status as a separate `TaxFilingStatus` entity (required for MAGI household composition). All become typed evidence entities in the backend linked to the participant role.
-- **Pega**: `CitizenshipStatus` embedded page on `Person` entity. `IsPregnant`, `DueDate`, `HasDisability`, `ReceivingSSI` as flat properties on `Person`.
-- **MAGI-in-the-Cloud**: `is_pregnant`, `is_blind_or_disabled`, `is_full_time_student`, `tax_filer_status`, `is_claimed_as_dependent` as flat fields on the `applicant` object.
-- **CMS Marketplace API**: `is_pregnant`, `is_parent`, `has_mec`, `uses_tobacco` as flat fields on `Person`.
-- **CalSAWS**: `citizenshipStatus`, `immigrationStatus`, `isPregnant`, `hasDisability`, `receivingSSI` as flat fields on `HouseholdMember`.
-
-**Tax filing status (MAGI Medicaid):**
-
-MAGI Medicaid uses the tax household concept — eligibility is based on tax filing status and dependency relationships, not physical household membership. This requires additional fields that are not needed for SNAP-only applications: `taxFilingStatus` (tax filer, tax dependent, non-filer), `claimedAsDependentBy` (reference to another member), `expectToFileTaxes`, `marriedFilingJointly`. Cúram models these as a separate `TaxFilingStatus` evidence entity. MAGI-in-the-Cloud puts them as flat fields on each applicant.
+**Tax filing status (MAGI Medicaid):** MAGI Medicaid determines eligibility based on tax filing status and dependency relationships, not physical household membership. This requires fields not needed for SNAP-only applications: `taxFilingStatus`, `claimedAsDependentBy`, `expectToFileTaxes`, `marriedFilingJointly`. See [Decision 14](#decision-14-magi-tax-filing-status-fields).
 
 ---
 
@@ -190,13 +119,11 @@ MAGI Medicaid uses the tax household concept — eligibility is based on tax fil
 
 Financial facts collected to support eligibility determination.
 
-**Standard structure across vendors:**
+- **Income**: per-person, by source (employment, self-employment, Social Security, SSI, TANF, child support, etc.) with `amount`, `frequency`, `startDate`, optionally `employer`
+- **Expenses**: household-level for shelter and utilities; per-person for child care, medical (elderly/disabled), court-ordered child support paid
+- **Assets**: per-person, by type (bank account, vehicle, real property, life insurance) with `amount` and `description`
 
-- **Income**: per-person, typed by source (`incomeType`: employment, self-employment, Social Security, SSI, TANF, child support, etc.), with `amount`, `frequency`, `startDate`, optionally `employer`
-- **Expenses**: household-level for shelter and utilities; per-person for child care, medical (elderly/disabled), court-ordered child support paid. Cúram and Pega model these as typed child entities of `Person` or `Application`. CalSAWS mirrors this.
-- **Assets/Resources**: per-person, typed (`resourceType`: bank account, vehicle, real property, life insurance), with `amount` and `description`
-
-See [Decision 13](#decision-13-income-and-expense-detail-at-intake) for the design approach.
+See [Decision 13](#decision-13-income-and-expense-detail-at-intake).
 
 ---
 
