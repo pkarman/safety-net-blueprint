@@ -911,24 +911,6 @@ components:
             - down
           description: Desired trend direction (for trend-type targets).
 
-    # Shared utility schemas
-
-    FieldChange:
-      type: object
-      description: A single field change recorded in an update event.
-      required:
-        - field
-        - before
-        - after
-      properties:
-        field:
-          type: string
-          description: Name of the changed field.
-        before:
-          description: Value before the update.
-        after:
-          description: Value after the update.
-
     # Event payload schemas — referenced by x-events section above
     TaskCreatedEvent:
       description: Snapshot of the newly created task resource.
@@ -1014,8 +996,7 @@ components:
       properties: {}
 
     TaskDeletedEvent:
-      type: object
-      properties: {}
+      $ref: "./components/events.yaml#/ResourceDeletedEvent"
 
     TaskAwaitingClientEvent:
       type: object
@@ -1089,16 +1070,7 @@ components:
             - sla_deadline_exceeded
 
     TaskUpdatedEvent:
-      type: object
-      description: Describes which fields changed during a PATCH update.
-      required:
-        - changes
-      properties:
-        changes:
-          type: array
-          description: List of fields that changed, with before and after values.
-          items:
-            $ref: "#/components/schemas/FieldChange"
+      $ref: "./components/events.yaml#/ResourceUpdatedEvent"
 
   examples:
     QueueExample1:

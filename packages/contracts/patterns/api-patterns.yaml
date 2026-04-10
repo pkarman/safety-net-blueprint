@@ -397,6 +397,54 @@ x_events:
       - org.codeforamerica.safety-net-blueprint.intake.application.submitted
       - org.codeforamerica.safety-net-blueprint.intake.application.submitted.v2
 
+  auto_emit:
+    description: |
+      Every REST resource emits three standard lifecycle events automatically.
+      These do not require any state machine declaration — the mock server emits
+      them for every POST, PATCH, and DELETE, regardless of whether a state
+      machine is defined.
+
+      All three events must be declared in x-events and have corresponding
+      payload schemas. This is enforced by convention; api:new scaffolds them
+      automatically.
+
+    events:
+      - trigger: POST /resources
+        action: "{object}.created"
+        payload: Full resource snapshot (same shape as the main resource schema)
+        schema: "{Resource}CreatedEvent — $ref to the resource schema itself"
+
+      - trigger: PATCH /resources/{id}
+        action: "{object}.updated"
+        payload: Field-level diff listing changed fields with before/after values
+        schema: "$ref: ./components/events.yaml#/ResourceUpdatedEvent (shared)"
+
+      - trigger: DELETE /resources/{id}
+        action: "{object}.deleted"
+        payload: null
+        schema: "$ref: ./components/events.yaml#/ResourceDeletedEvent (shared)"
+
+    payload_schemas:
+      created: |
+        Domain-specific. $ref the resource schema directly:
+          {Resource}CreatedEvent:
+            description: Snapshot of the newly created {resource} resource.
+            $ref: "#/components/schemas/{Resource}"
+      updated: |
+        Shared across all domains. Use:
+          {Resource}UpdatedEvent:
+            $ref: "./components/events.yaml#/ResourceUpdatedEvent"
+      deleted: |
+        Shared across all domains. Use:
+          {Resource}DeletedEvent:
+            $ref: "./components/events.yaml#/ResourceDeletedEvent"
+
+    traceparent:
+      description: |
+        The triggering request's traceparent header is propagated to all emitted
+        events. Consumers can reconstruct the full causal chain by filtering the
+        event log by trace ID (extracted from traceparent).
+
 # =============================================================================
 # Behavioral YAML Conventions
 # =============================================================================
