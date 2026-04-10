@@ -31,6 +31,42 @@ Event contracts for each domain live in two artifacts:
 
 AsyncAPI specs are generated from these two sources. State partners do not author AsyncAPI directly — they overlay the source artifacts and regenerate.
 
+### Event emission model
+
+Two complementary patterns determine when events are emitted:
+
+**1. CRUD auto-emit (REST handlers)**
+
+Every REST resource emits three lifecycle events automatically — no state machine declaration required:
+
+| Trigger | Event action | Payload (`data`) |
+|---------|-------------|------------------|
+| `POST /resources` | `{object}.created` | Full resource snapshot |
+| `PATCH /resources/{id}` | `{object}.updated` | `{ changes: [{ field, before, after }] }` |
+| `DELETE /resources/{id}` | `{object}.deleted` | `null` |
+
+The `before` and `after` values in `updated` events record field-level changes so consumers can react to specific mutations without fetching the full resource.
+
+**2. Declarative state machine events (RPC transitions)**
+
+Transitions declare their own events explicitly in the state machine YAML. Each `type: event` effect specifies the action verb and any payload fields to include — typically context values from `$request.*` or `$caller.*`:
+
+```yaml
+- type: event
+  action: claimed
+  data:
+    assignedToId: $caller.id
+```
+
+All events — both auto-emitted and declarative — use the same `emitEvent()` utility, which constructs the CloudEvents envelope, persists it to the shared `/platform/events` log, and broadcasts it over the SSE stream.
+
+The `type` field is always derived implicitly: `org.codeforamerica.safety-net-blueprint.{domain}.{object}.{action}`. There is no ambiguity about what constitutes a valid type — it always reflects a real operation on a real resource.
+
+**What does not emit events**
+
+- `GET` requests (read operations) never emit events — only state-changing operations do
+- Events are not emitted by the state machine at creation time — the REST create handler handles this universally
+
 ---
 
 ## `/events` Endpoint
