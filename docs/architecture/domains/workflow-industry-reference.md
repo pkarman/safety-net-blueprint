@@ -77,9 +77,9 @@ Federal law sets maximum processing timelines that begin at application receipt,
 | `completed` | stopped | Work finished; regulatory deadline no longer applies |
 | `cancelled` | stopped | Task abandoned; can be reopened by a supervisor, which resets routing via `pending` |
 
-All states have an explicit `slaClock` value — see [Decision 13](#decision-13-slaclock-required-on-every-state). The `awaiting_*` states use `paused` rather than `stopped` — see [Decision 14](#decision-14-awaiting-states-pause-the-sla-clock).
+All states have an explicit `slaClock` value — see [Decision 12](#decision-12-slaclock-required-on-every-state). The `awaiting_*` states use `paused` rather than `stopped` — see [Decision 13](#decision-13-awaiting-states-pause-the-sla-clock).
 
-Task-type-specific states (e.g., `hearing_scheduled` for fair hearing tasks) are added alongside these baseline states and are only reachable via transitions guarded on task type — see [Decision 10](#decision-10-guards-on-tasktype-enable-multiple-lifecycles-per-state-machine).
+Task-type-specific states (e.g., `hearing_scheduled` for fair hearing tasks) are added alongside these baseline states and are only reachable via transitions guarded on task type — see [Decision 9](#decision-9-guards-on-tasktype-enable-multiple-lifecycles-per-state-machine).
 
 ### Key transitions
 
@@ -87,17 +87,17 @@ Task-type-specific states (e.g., `hearing_scheduled` for fair hearing tasks) are
 - **`await-client`**: `in_progress` → `awaiting_client` — caseworker is waiting on the client; pauses SLA clock
 - **`await-verification`**: `in_progress` → `awaiting_verification` — caseworker waiting on a third-party data source; pauses SLA clock
 - **`resume`**: `awaiting_*` → `in_progress` — caseworker resumes after external input received; clock resumes
-- **`system-resume`**: `awaiting_verification` → `in_progress` — automated callback from a verification service; see [Decision 9](#decision-9-automated-verification-uses-a-dedicated-system-resume-trigger)
+- **`system-resume`**: `awaiting_verification` → `in_progress` — automated callback from a verification service; see [Decision 8](#decision-8-automated-verification-uses-a-dedicated-system-resume-trigger)
 - **`escalate`**: `pending` | `in_progress` → `escalated` — caseworker or timer escalates for supervisor attention; re-evaluates priority via rules engine
 - **`de-escalate`**: `escalated` → `pending` — supervisor resolves; returns to queue for re-claim (handles both assigned and unassigned origin states cleanly)
 - **`submit-for-review`**: `in_progress` → `pending_review` — caseworker requests supervisor sign-off
 - **`approve`**: `pending_review` → `completed` — supervisor approves; task closes
 - **`return-to-worker`**: `pending_review` → `in_progress` — supervisor returns for revision; keeps task with the same caseworker rather than re-queuing
 - **`complete`**: `in_progress` → `completed` — caseworker marks work done (no review required)
-- **`cancel`**: `pending` | `in_progress` | `escalated` → `cancelled` — supervisor-only; see [Decision 8](#decision-8-cancel-is-supervisor-only-no-notify-effect)
+- **`cancel`**: `pending` | `in_progress` | `escalated` → `cancelled` — supervisor-only; see [Decision 7](#decision-7-cancel-is-supervisor-only-no-notify-effect)
 - **`reopen`**: `cancelled` → `pending` — supervisor reinstates; clears assignment for fresh routing
 
-Timer-triggered transitions fire automatically when durations elapse. See [Decision 7](#decision-7-calendartype-is-explicit-per-timer-transition) for how calendar vs. business-hour deadlines are handled.
+Timer-triggered transitions fire automatically when durations elapse. See [Decision 6](#decision-6-calendartype-is-explicit-per-timer-transition) for how calendar vs. business-hour deadlines are handled.
 
 ### Lifecycle hooks
 
@@ -109,7 +109,7 @@ Timer-triggered transitions fire automatically when durations elapse. See [Decis
 
 ## SLA and deadline management
 
-Each task carries one `slaInfo` record per applicable SLA type. Multiple SLA types can apply simultaneously — a SNAP application initially filed as standard may later be determined to qualify for expedited processing, at which point both deadlines apply. See [Decision 16](#decision-16-multiple-sla-types-can-apply-per-task).
+Each task carries one `slaInfo` record per applicable SLA type. Multiple SLA types can apply simultaneously — a SNAP application initially filed as standard may later be determined to qualify for expedited processing, at which point both deadlines apply. See [Decision 15](#decision-15-multiple-sla-types-can-apply-per-task).
 
 SLA type definitions live in `*-sla-types.yaml`, separately from the state machine, and are independently replaceable per state. The baseline types derived from federal regulatory deadlines:
 
@@ -120,7 +120,7 @@ SLA type definitions live in `*-sla-types.yaml`, separately from the state machi
 | `medicaid_standard` | 45 days | 75% elapsed | `awaiting_client` or `awaiting_verification` |
 | `medicaid_disability` | 90 days | 75% elapsed | `awaiting_client` or `awaiting_verification` |
 
-All baseline durations are derived from federal regulations. See [Decision 15](#decision-15-sla-type-definitions-are-independently-replaceable).
+All baseline durations are derived from federal regulations. See [Decision 14](#decision-14-sla-type-definitions-are-independently-replaceable).
 
 ---
 
@@ -128,13 +128,13 @@ All baseline durations are derived from federal regulations. See [Decision 15](#
 
 Domain events serve two purposes: they are the audit trail required by federal and state regulations, and they are the integration surface for cross-domain communication. Other domains (communication, case management, eligibility) subscribe to workflow events rather than polling task state.
 
-The state machine YAML is the authoritative source for what events exist and what they carry — `event` effects declare the action name and data payload. The audit trail is immutable — events are never modified or deleted via the API. See [Decision 18](#decision-18-events-in-a-shared-collection-across-domains) and [Decision 19](#decision-19-the-audit-trail-is-immutable).
+The state machine YAML is the authoritative source for what events exist and what they carry — `event` effects declare the action name and data payload. The audit trail is immutable — events are never modified or deleted via the API. See [Decision 18](#decision-18-events-in-a-shared-collection-across-domains) and [Decision 17](#decision-17-the-audit-trail-is-immutable).
 
 ---
 
 ## Metrics
 
-Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, alongside the state machine — not in a proprietary GUI. This makes measurement definitions explicit, versionable, and portable across state implementations. See [Decision 20](#decision-20-metrics-as-yaml-contract-artifacts).
+Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, alongside the state machine — not in a proprietary GUI. This makes measurement definitions explicit, versionable, and portable across state implementations. See [Decision 18](#decision-18-metrics-as-yaml-contract-artifacts).
 
 ---
 
@@ -147,23 +147,21 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 | 3 | [`pending_review` as dedicated supervisor sign-off state](#decision-3-pending_review-as-a-dedicated-supervisor-sign-off-state) | QC regulations require structured supervisor approval before determination — distinct from escalation. |
 | 4 | [Named RPC transitions, not PATCH](#decision-4-named-rpc-transitions-not-patch) | Named triggers map cleanly to audit events, can carry request bodies, and can be independently guarded. |
 | 5 | [Effects declared in state machine YAML](#decision-5-effects-declared-in-state-machine-yaml) | The contract is the specification — implementations don't need to read source code to understand what a transition does. |
-| 6 | [`when` conditions use JSON Logic](#decision-6-when-conditions-use-json-logic) | One evaluator and one toolchain across guards, rules, metric filters, and conditional effects. |
-| 7 | [`calendarType` explicit per timer transition](#decision-7-calendartype-is-explicit-per-timer-transition) | Regulatory deadlines are calendar days; staffing SLAs are business hours — conflating them produces incorrect enforcement. |
-| 8 | [`cancel` is supervisor-only; no `notify` effect](#decision-8-cancel-is-supervisor-only-no-notify-effect) | Cancellation has federal reporting implications; notification is a consumer concern handled by event subscribers. |
-| 9 | [Automated verification uses a dedicated `system-resume` trigger](#decision-9-automated-verification-uses-a-dedicated-system-resume-trigger) | Keeps automated callbacks distinguishable from human actions in the audit trail — required for SNAP/Medicaid QC. |
-| 10 | [Guards on `taskType` enable multiple lifecycles per state machine](#decision-10-guards-on-tasktype-enable-multiple-lifecycles-per-state-machine) | One API surface and shared infrastructure serving multiple task types without separate state machines or endpoints. |
-| 11 | [`workflow-rules.yaml` is independently replaceable](#decision-11-workflow-rulesyaml-is-independently-replaceable) | Routing logic varies significantly across states — decoupling it from the state machine lets each change independently. |
-| 12 | [`first-match-wins` rule evaluation](#decision-12-first-match-wins-rule-evaluation) | Simple and predictable; multi-factor weighted scoring is a known gap. |
-| 13 | [`slaClock` required on every state](#decision-13-slaclock-required-on-every-state) | No default prevents silent regressions when new states are added. |
-| 14 | [`awaiting_*` states pause the SLA clock](#decision-14-awaiting-states-pause-the-sla-clock) | Federal SNAP regulations treat client-caused delays as excluded time — pausing preserves the original deadline rather than granting a fresh one. |
-| 15 | [SLA type definitions are independently replaceable](#decision-15-sla-type-definitions-are-independently-replaceable) | Deadline values vary by program mix — states replace the file without touching lifecycle logic. |
-| 16 | [Multiple SLA types can apply per task](#decision-16-multiple-sla-types-can-apply-per-task) | A SNAP task may become expedited after initial creation — both deadlines must apply simultaneously. |
-| 17 | [`pauseWhen`/`resumeWhen` per SLA type, not a hardcoded state list](#decision-17-pausewhenresumewhen-per-sla-type) | Different SLA types can pause on different conditions — a state might pause `snap_standard` but not `snap_expedited` during `awaiting_client`. |
-| 18 | [Events in a shared collection across domains](#decision-18-events-in-a-shared-collection-across-domains) | Cross-domain queries without joining separate stores — consistent with the cross-cutting audit domain approach. |
-| 19 | [The audit trail is immutable](#decision-19-the-audit-trail-is-immutable) | Federal QC reviews and fair hearings depend on an unaltered history — mutations undermine the regulatory function. |
-| 20 | [Metrics as YAML contract artifacts](#decision-20-metrics-as-yaml-contract-artifacts) | Metric definitions are explicit, versionable, and portable — unlike proprietary GUI dashboards. |
-| 21 | [Duration metrics via event pairs, not pre-computed fields](#decision-21-duration-metrics-via-event-pairs) | Declarative model lets metric authors define new measurements without schema changes. |
-| 22 | [Pre-aggregation is an adapter-layer concern](#decision-22-pre-aggregation-is-an-adapter-layer-concern) | On-demand computation is simpler and always current for the baseline; states add pre-aggregation in their adapters. |
+| 6 | [`calendarType` explicit per timer transition](#decision-6-calendartype-is-explicit-per-timer-transition) | Regulatory deadlines are calendar days; staffing SLAs are business hours — conflating them produces incorrect enforcement. |
+| 7 | [`cancel` is supervisor-only; no `notify` effect](#decision-7-cancel-is-supervisor-only-no-notify-effect) | Cancellation has federal reporting implications; notification is a consumer concern handled by event subscribers. |
+| 8 | [Automated verification uses a dedicated `system-resume` trigger](#decision-8-automated-verification-uses-a-dedicated-system-resume-trigger) | Keeps automated callbacks distinguishable from human actions in the audit trail — required for SNAP/Medicaid QC. |
+| 9 | [Guards on `taskType` enable multiple lifecycles per state machine](#decision-9-guards-on-tasktype-enable-multiple-lifecycles-per-state-machine) | One API surface and shared infrastructure serving multiple task types without separate state machines or endpoints. |
+| 10 | [`workflow-rules.yaml` is independently replaceable](#decision-10-workflow-rulesyaml-is-independently-replaceable) | Routing logic varies significantly across states — decoupling it from the state machine lets each change independently. |
+| 11 | [`first-match-wins` rule evaluation](#decision-11-first-match-wins-rule-evaluation) | Simple and predictable; multi-factor weighted scoring is a known gap. |
+| 12 | [`slaClock` required on every state](#decision-12-slaclock-required-on-every-state) | No default prevents silent regressions when new states are added. |
+| 13 | [`awaiting_*` states pause the SLA clock](#decision-13-awaiting-states-pause-the-sla-clock) | Federal SNAP regulations treat client-caused delays as excluded time — pausing preserves the original deadline rather than granting a fresh one. |
+| 14 | [SLA type definitions are independently replaceable](#decision-14-sla-type-definitions-are-independently-replaceable) | Deadline values vary by program mix — states replace the file without touching lifecycle logic. |
+| 15 | [Multiple SLA types can apply per task](#decision-15-multiple-sla-types-can-apply-per-task) | A SNAP task may become expedited after initial creation — both deadlines must apply simultaneously. |
+| 16 | [`pauseWhen`/`resumeWhen` per SLA type, not a hardcoded state list](#decision-16-pausewhenresumewhen-per-sla-type) | Different SLA types can pause on different conditions — a state might pause `snap_standard` but not `snap_expedited` during `awaiting_client`. |
+| 17 | [The audit trail is immutable](#decision-17-the-audit-trail-is-immutable) | Federal QC reviews and fair hearings depend on an unaltered history — mutations undermine the regulatory function. |
+| 18 | [Metrics as YAML contract artifacts](#decision-18-metrics-as-yaml-contract-artifacts) | Metric definitions are explicit, versionable, and portable — unlike proprietary GUI dashboards. |
+| 19 | [Duration metrics via event pairs, not pre-computed fields](#decision-19-duration-metrics-via-event-pairs) | Declarative model lets metric authors define new measurements without schema changes. |
+| 20 | [Pre-aggregation is an adapter-layer concern](#decision-20-pre-aggregation-is-an-adapter-layer-concern) | On-demand computation is simpler and always current for the baseline; states add pre-aggregation in their adapters. |
 
 ---
 
@@ -266,21 +264,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 6: `when` conditions use JSON Logic
-
-**Status:** Decided
-
-**What's being decided:** The expression language for conditional effects on transitions.
-
-**Considerations:**
-- JSON Logic is already used for guard conditions, routing rules, SLA auto-assign conditions, and metric filters. Using it for `when` conditions too means one evaluator, one toolchain, and no additional learning curve for state implementers.
-- The alternative — a separate condition language — would introduce a second evaluator and second set of tooling for state customizers.
-
-**Decision:** `when` conditions use JSON Logic — the same evaluator used across the rest of the contract system.
-
----
-
-### Decision 7: `calendarType` is explicit per timer transition
+### Decision 6: `calendarType` is explicit per timer transition
 
 **Status:** Decided
 
@@ -313,7 +297,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 8: `cancel` is supervisor-only; no `notify` effect
+### Decision 7: `cancel` is supervisor-only; no `notify` effect
 
 **Status:** Decided
 
@@ -329,7 +313,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 9: Automated verification uses a dedicated `system-resume` trigger
+### Decision 8: Automated verification uses a dedicated `system-resume` trigger
 
 **Status:** Decided
 
@@ -343,7 +327,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 10: Guards on `taskType` enable multiple lifecycles per state machine
+### Decision 9: Guards on `taskType` enable multiple lifecycles per state machine
 
 **Status:** Decided
 
@@ -361,7 +345,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 11: `workflow-rules.yaml` is independently replaceable
+### Decision 10: `workflow-rules.yaml` is independently replaceable
 
 **Status:** Decided
 
@@ -385,7 +369,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 12: `first-match-wins` rule evaluation
+### Decision 11: `first-match-wins` rule evaluation
 
 **Status:** Decided
 
@@ -400,7 +384,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 13: `slaClock` required on every state
+### Decision 12: `slaClock` required on every state
 
 **Status:** Decided
 
@@ -414,7 +398,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 14: `awaiting_*` states pause the SLA clock
+### Decision 13: `awaiting_*` states pause the SLA clock
 
 **Status:** Decided
 
@@ -435,7 +419,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 15: SLA type definitions are independently replaceable
+### Decision 14: SLA type definitions are independently replaceable
 
 **Status:** Decided
 
@@ -451,7 +435,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 16: Multiple SLA types can apply per task
+### Decision 15: Multiple SLA types can apply per task
 
 **Status:** Decided
 
@@ -471,7 +455,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 17: `pauseWhen`/`resumeWhen` per SLA type
+### Decision 16: `pauseWhen`/`resumeWhen` per SLA type
 
 **Status:** Decided
 
@@ -488,24 +472,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 18: Events in a shared collection across domains
-
-**Status:** Decided
-
-**What's being decided:** Whether domain events are stored per-domain or in a shared collection.
-
-**Considerations:**
-- Siloed event stores per domain would require joining them for cross-domain queries — "all events for this person across case management and workflow" would require joining separate stores.
-- A shared collection enables cross-domain queries from one place, consistent with the cross-cutting audit domain approach (see intake [Decision 8](intake-design-reference.md#decision-8-application-data-mutability-and-audit-trail)).
-- JSM, ServiceNow, and Camunda each maintain separate audit logs per system — cross-system queries require custom reporting.
-
-**Decision:** Events are stored in a shared collection across all domains, identified by `domain`, `resource`, and `action`.
-
-**Customization:** States can add additional `event` effects to transitions via overlay.
-
----
-
-### Decision 19: The audit trail is immutable
+### Decision 17: The audit trail is immutable
 
 **Status:** Decided
 
@@ -524,7 +491,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 20: Metrics as YAML contract artifacts
+### Decision 18: Metrics as YAML contract artifacts
 
 **Status:** Decided
 
@@ -548,7 +515,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 21: Duration metrics via event pairs
+### Decision 19: Duration metrics via event pairs
 
 **Status:** Decided
 
@@ -562,7 +529,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 ---
 
-### Decision 22: Pre-aggregation is an adapter-layer concern
+### Decision 20: Pre-aggregation is an adapter-layer concern
 
 **Status:** Decided
 
