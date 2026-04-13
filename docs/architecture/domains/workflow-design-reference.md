@@ -567,6 +567,22 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 **Decision:** Explicit context bindings (C). This follows the bounded-context model of Appian and Cúram — the most portable pattern for a blueprint that states customize. Unlike denormalization, it does not couple the task schema to the subject schema. Unlike arbitrary traversal, it keeps data dependencies readable in the contract artifact. States can extend context bindings via overlay to expose additional subject fields to rules without modifying the engine.
 
+**Implementation details:**
+
+**Per-ruleSet context scope:** Context bindings are declared per-ruleSet (not globally), so each ruleSet resolves only what it needs. This matches JSM (lookup issue actions are per-automation rule), Appian CMS (related record configuration is per-allocation rule), IBM Cúram (WDOs are defined per allocation table), and Salesforce Flow (`Get Records` is placed per-flow). Pega's global clipboard — all case data always in scope — is the outlier; it maximizes flexibility at the cost of invisible data dependencies.
+
+**`this` alias for the calling resource:** The record being evaluated is always available as `this` in rule conditions without a binding declaration. This follows the universal pattern: Pega's primary page (the current case, always in scope), ServiceNow's `current` (built-in JavaScript reference), JSM's `{{issue.*}}` Smart Values (triggering issue is the base context), and Salesforce's `{!$Record.*}`. No vendor requires an explicit declaration to access the primary record.
+
+**Entity reference format (`domain/resource`):** Entities are identified in `domain/resource` format (e.g., `intake/applications`), matching CloudEvents source semantics used elsewhere in the blueprint. The collection name is the last path segment. There is no direct vendor equivalent — Pega references page classes, ServiceNow references GlideRecord tables — but the two-segment format is unique to our multi-domain contract architecture and provides namespacing without a full URI.
+
+**Chaining:** Bindings are resolved in declaration order; each binding's `from` path can reference previously resolved entities, enabling multi-hop traversal (e.g., `from: application.caseId` to resolve a case via an application). Pega and ServiceNow support arbitrary-depth dot-walking natively. JSM supports only single-level lookup. Appian CMS allows one level of related record access per rule set. IBM Cúram WDOs are flat — chaining requires defining additional WDO members. The blueprint's approach is more flexible than JSM/Appian/Cúram but bounded (declared in the contract) unlike Pega/ServiceNow's implicit traversal.
+
+**Sub-resource constraint:** Entity references must be exactly two segments (`domain/resource`). Sub-resources (e.g., `/cases/{caseId}/documents`) are not supported because entity lookup is by globally unique ID, which sub-resources lack without parent context. All major vendors (ServiceNow GlideRecord, Salesforce objects, Pega page classes) reference entities by flat type, not by hierarchical path — this constraint is consistent with industry practice.
+
+**Static validation:** `validate-rules.js` runs at `npm run validate` and checks entity paths against discoverable API resources and `from` fields against the calling resource's schema. Runtime behavior: entity not found skips the rule set (error logged); missing `from` field value skips the binding (warning logged).
+
+**Known gap:** Runtime error handling — what surfaces to callers when rule evaluation is skipped, how to distinguish degraded evaluation from no-op evaluation — is a separate design concern. See [issue #220](https://github.com/codeforamerica/safety-net-blueprint/issues/220).
+
 **Customization:** States add or replace context bindings in their overlay of `workflow-rules.yaml` to expose additional subject entity fields to rule conditions.
 
 ---

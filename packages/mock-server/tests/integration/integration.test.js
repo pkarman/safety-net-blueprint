@@ -969,7 +969,7 @@ async function runTests() {
       const response = await fetch(`${BASE_URL}${taskPath}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Caller-Id': 'worker-rule-1' },
-        body: JSON.stringify({ name: 'SNAP expedited task', status: 'pending', programType: 'snap', isExpedited: true })
+        body: JSON.stringify({ name: 'SNAP expedited task', status: 'pending', programType: 'snap', isExpedited: true, subjectId: '00000004-0000-4000-8000-000000000001' })
       });
 
       if (response.status === 201) {

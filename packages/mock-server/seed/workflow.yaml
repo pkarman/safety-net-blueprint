@@ -3,14 +3,14 @@
 
 QueueExample1:
   id: ae5ed10f-657d-55f3-b53c-b381ec583a1e
-  name: Laverne Hills Sr.
-  description: Voluptate vilitas officiis.
+  name: snap-intake
+  description: Queue for SNAP intake tasks.
   createdAt: '2024-01-01T00:00:00.000Z'
   updatedAt: '2024-01-01T00:00:00.000Z'
 QueueExample2:
   id: f46c5c87-b1fe-55c2-9166-873c2748d4f4
-  name: Miss Flora Runolfsdottir
-  description: Amo apto tamdiu utor caute stillicidium.
+  name: general-intake
+  description: Default queue for all other intake tasks.
   createdAt: '2024-01-31T00:00:00.000Z'
   updatedAt: '2024-01-31T00:00:00.000Z'
 TaskExample1:
@@ -20,6 +20,7 @@ TaskExample1:
   status: pending
   programType: snap
   isExpedited: true
+  subjectId: 00000004-0000-4000-8000-000000000001
   queueId: ae5ed10f-657d-55f3-b53c-b381ec583a1e
   priority: expedited
   startedAt: '2024-01-01T00:00:00.000Z'
@@ -37,6 +38,7 @@ TaskExample2:
   status: in_progress
   programType: tanf
   isExpedited: false
+  subjectId: 33845328-2970-5989-8996-ddb233383c13
   queueId: f46c5c87-b1fe-55c2-9166-873c2748d4f4
   priority: high
   startedAt: '2024-01-31T00:00:00.000Z'

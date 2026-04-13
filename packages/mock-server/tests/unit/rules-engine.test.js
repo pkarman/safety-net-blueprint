@@ -11,63 +11,69 @@ import { evaluateRuleSet, buildRuleContext, resolvePath } from '../../src/rules-
 // resolvePath
 // =============================================================================
 
-test('resolvePath — resolves single-segment path (strips namespace)', () => {
+test('resolvePath — resolves single-segment path', () => {
   const resource = { subjectId: 'app-1', status: 'pending' };
-  assert.strictEqual(resolvePath(resource, 'task.subjectId'), 'app-1');
+  assert.strictEqual(resolvePath(resource, 'subjectId'), 'app-1');
 });
 
 test('resolvePath — resolves nested path', () => {
   const resource = { meta: { county: 'alameda' } };
-  assert.strictEqual(resolvePath(resource, 'task.meta.county'), 'alameda');
+  assert.strictEqual(resolvePath(resource, 'meta.county'), 'alameda');
+});
+
+test('resolvePath — resolves path across resolved entity (chaining)', () => {
+  const context = { subjectId: 'app-1', application: { caseId: 'case-99' } };
+  assert.strictEqual(resolvePath(context, 'application.caseId'), 'case-99');
 });
 
 test('resolvePath — returns undefined for missing field', () => {
   const resource = { status: 'pending' };
-  assert.strictEqual(resolvePath(resource, 'task.subjectId'), undefined);
-});
-
-test('resolvePath — handles path with no namespace', () => {
-  const resource = { subjectId: 'app-1' };
-  assert.strictEqual(resolvePath(resource, 'subjectId'), 'app-1');
+  assert.strictEqual(resolvePath(resource, 'subjectId'), undefined);
 });
 
 // =============================================================================
 // buildRuleContext
 // =============================================================================
 
-test('buildRuleContext — builds context from task.* binding', () => {
-  const resource = { id: 'task-1', programType: 'snap', isExpedited: true };
-  const context = buildRuleContext(['task.*'], resource);
-  assert.deepStrictEqual(context, { task: { id: 'task-1', programType: 'snap', isExpedited: true } });
+test('buildRuleContext — calling resource available as "this"', () => {
+  const resource = { id: 'task-1', isExpedited: true };
+  const context = buildRuleContext(resource);
+  assert.deepStrictEqual(context, { this: { id: 'task-1', isExpedited: true } });
 });
 
-test('buildRuleContext — handles multiple bindings', () => {
-  const resource = { id: 'task-1', status: 'pending' };
-  const context = buildRuleContext(['task.*', 'item.*'], resource);
-  assert.deepStrictEqual(context.task, { id: 'task-1', status: 'pending' });
-  assert.deepStrictEqual(context.item, { id: 'task-1', status: 'pending' });
-});
-
-test('buildRuleContext — handles null/empty bindings', () => {
-  const resource = { id: 'task-1' };
-  assert.deepStrictEqual(buildRuleContext(null, resource), {});
-  assert.deepStrictEqual(buildRuleContext([], resource), {});
-});
-
-test('buildRuleContext — merges resolvedEntities into context', () => {
+test('buildRuleContext — merges resolvedEntities alongside "this"', () => {
   const resource = { id: 'task-1', subjectId: 'app-1' };
   const resolvedEntities = { application: { id: 'app-1', programs: ['snap'] } };
-  const context = buildRuleContext(['task.*'], resource, resolvedEntities);
-  assert.deepStrictEqual(context.task, { id: 'task-1', subjectId: 'app-1' });
+  const context = buildRuleContext(resource, resolvedEntities);
+  assert.deepStrictEqual(context.this, { id: 'task-1', subjectId: 'app-1' });
   assert.deepStrictEqual(context.application, { id: 'app-1', programs: ['snap'] });
 });
 
-test('buildRuleContext — object-form bindings are ignored (resolved by caller)', () => {
+test('buildRuleContext — handles empty resolvedEntities', () => {
   const resource = { id: 'task-1' };
-  const binding = { as: 'application', entity: 'applications', from: 'task.subjectId' };
-  // Object-form bindings are not processed here — no error, just ignored
-  const context = buildRuleContext([binding], resource);
-  assert.deepStrictEqual(context, {});
+  assert.deepStrictEqual(buildRuleContext(resource, {}), { this: { id: 'task-1' } });
+  assert.deepStrictEqual(buildRuleContext(resource), { this: { id: 'task-1' } });
+});
+
+// =============================================================================
+// evaluateRuleSet — conditions using "this" alias
+// =============================================================================
+
+test('evaluateRuleSet — condition references calling resource via "this"', () => {
+  const ruleSet = {
+    rules: [
+      {
+        id: 'expedited',
+        order: 1,
+        condition: { '==': [{ var: 'this.isExpedited' }, true] },
+        action: { setPriority: 'expedited' }
+      }
+    ]
+  };
+  const context = buildRuleContext({ id: 'task-1', isExpedited: true });
+  const result = evaluateRuleSet(ruleSet, context);
+  assert.strictEqual(result.matched, true);
+  assert.strictEqual(result.ruleId, 'expedited');
 });
 
 test('evaluateRuleSet — condition references resolved entity field', () => {
@@ -81,10 +87,10 @@ test('evaluateRuleSet — condition references resolved entity field', () => {
       }
     ]
   };
-  const context = {
-    task: { id: 'task-1', subjectId: 'app-1' },
-    application: { id: 'app-1', programs: ['snap', 'medicaid'] }
-  };
+  const context = buildRuleContext(
+    { id: 'task-1', subjectId: 'app-1' },
+    { application: { id: 'app-1', programs: ['snap', 'medicaid'] } }
+  );
   const result = evaluateRuleSet(ruleSet, context);
   assert.strictEqual(result.matched, true);
   assert.strictEqual(result.ruleId, 'snap-rule');
@@ -94,36 +100,18 @@ test('evaluateRuleSet — condition references resolved entity field', () => {
 // evaluateRuleSet — matching conditions
 // =============================================================================
 
-test('evaluateRuleSet — matches JSON Logic condition', () => {
-  const ruleSet = {
-    rules: [
-      {
-        id: 'rule-1',
-        order: 1,
-        condition: { '==': [{ var: 'task.programType' }, 'snap'] },
-        action: { assignToQueue: 'snap-intake' }
-      }
-    ]
-  };
-  const context = { task: { programType: 'snap' } };
-  const result = evaluateRuleSet(ruleSet, context);
-  assert.strictEqual(result.matched, true);
-  assert.strictEqual(result.ruleId, 'rule-1');
-  assert.deepStrictEqual(result.action, { assignToQueue: 'snap-intake' });
-});
-
 test('evaluateRuleSet — non-matching condition returns matched:false', () => {
   const ruleSet = {
     rules: [
       {
         id: 'rule-1',
         order: 1,
-        condition: { '==': [{ var: 'task.programType' }, 'snap'] },
-        action: { assignToQueue: 'snap-intake' }
+        condition: { '==': [{ var: 'this.isExpedited' }, true] },
+        action: { setPriority: 'expedited' }
       }
     ]
   };
-  const context = { task: { programType: 'tanf' } };
+  const context = buildRuleContext({ isExpedited: false });
   const result = evaluateRuleSet(ruleSet, context);
   assert.strictEqual(result.matched, false);
 });
@@ -139,7 +127,7 @@ test('evaluateRuleSet — catch-all with condition: true', () => {
       }
     ]
   };
-  const result = evaluateRuleSet(ruleSet, { task: { programType: 'tanf' } });
+  const result = evaluateRuleSet(ruleSet, buildRuleContext({ id: 'task-1' }));
   assert.strictEqual(result.matched, true);
   assert.strictEqual(result.ruleId, 'catch-all');
   assert.deepStrictEqual(result.action, { assignToQueue: 'general-intake' });
@@ -157,12 +145,15 @@ test('evaluateRuleSet — first-match-wins order', () => {
       {
         id: 'snap-rule',
         order: 1,
-        condition: { '==': [{ var: 'task.programType' }, 'snap'] },
+        condition: { in: ['snap', { var: 'application.programs' }] },
         action: { assignToQueue: 'snap-intake' }
       }
     ]
   };
-  const context = { task: { programType: 'snap' } };
+  const context = buildRuleContext(
+    { id: 'task-1' },
+    { application: { programs: ['snap'] } }
+  );
   const result = evaluateRuleSet(ruleSet, context);
   // Should match snap-rule (order 1) even though catch-all is listed first
   assert.strictEqual(result.ruleId, 'snap-rule');
@@ -180,7 +171,7 @@ test('evaluateRuleSet — returns fallbackAction when present', () => {
       }
     ]
   };
-  const result = evaluateRuleSet(ruleSet, {});
+  const result = evaluateRuleSet(ruleSet, buildRuleContext({}));
   assert.strictEqual(result.matched, true);
   assert.deepStrictEqual(result.fallbackAction, { assignToQueue: 'general-intake' });
 });
@@ -191,13 +182,13 @@ test('evaluateRuleSet — handles null/empty ruleSet', () => {
   assert.deepStrictEqual(evaluateRuleSet({ rules: [] }, {}), { matched: false });
 });
 
-test('evaluateRuleSet — boolean equality with isExpedited', () => {
+test('evaluateRuleSet — boolean equality with isExpedited via "this"', () => {
   const ruleSet = {
     rules: [
       {
         id: 'expedited',
         order: 1,
-        condition: { '==': [{ var: 'task.isExpedited' }, true] },
+        condition: { '==': [{ var: 'this.isExpedited' }, true] },
         action: { setPriority: 'expedited' }
       },
       {
@@ -209,9 +200,9 @@ test('evaluateRuleSet — boolean equality with isExpedited', () => {
     ]
   };
 
-  const expedited = evaluateRuleSet(ruleSet, { task: { isExpedited: true } });
+  const expedited = evaluateRuleSet(ruleSet, buildRuleContext({ isExpedited: true }));
   assert.strictEqual(expedited.ruleId, 'expedited');
 
-  const normal = evaluateRuleSet(ruleSet, { task: { isExpedited: false } });
+  const normal = evaluateRuleSet(ruleSet, buildRuleContext({ isExpedited: false }));
   assert.strictEqual(normal.ruleId, 'default');
 });
