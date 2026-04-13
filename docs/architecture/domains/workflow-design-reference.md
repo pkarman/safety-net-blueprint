@@ -579,7 +579,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 **Sub-resource constraint:** Entity references must be exactly two segments (`domain/resource`). Sub-resources (e.g., `/cases/{caseId}/documents`) are not supported because entity lookup is by globally unique ID, which sub-resources lack without parent context. All major vendors (ServiceNow GlideRecord, Salesforce objects, Pega page classes) reference entities by flat type, not by hierarchical path — this constraint is consistent with industry practice.
 
-**Static validation:** `validate-rules.js` runs at `npm run validate` and checks entity paths against discoverable API resources and `from` fields against the calling resource's schema. Runtime behavior: entity not found skips the rule set (error logged); missing `from` field value skips the binding (warning logged).
+**Static validation:** `validate-rules.js` runs at `npm run validate` and checks entity paths against discoverable API resources and `from` fields against the calling resource's schema. Runtime: any failure to fully resolve declared context (entity not found, `from` path resolves to no value) skips the rule set and is logged as an error. Partial resolution is not allowed — if a binding is declared, the rule set depends on it.
 
 **Known gap:** Runtime error handling — what surfaces to callers when rule evaluation is skipped, how to distinguish degraded evaluation from no-op evaluation — is a separate design concern. See [issue #220](https://github.com/codeforamerica/safety-net-blueprint/issues/220).
 

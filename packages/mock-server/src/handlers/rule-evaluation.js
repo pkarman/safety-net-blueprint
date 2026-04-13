@@ -49,10 +49,10 @@ function resolveContextEntities(contextBindings, resource) {
     const entityId = resolvePath(lookupContext, binding.from);
 
     if (!entityId) {
-      console.warn(
-        `Context binding "${binding.as}": "${binding.from}" resolved to no value — skipping binding`
+      console.error(
+        `Context binding "${binding.as}": "${binding.from}" resolved to no value — skipping rule set`
       );
-      continue;
+      return null;
     }
 
     const entity = findById(collectionName, entityId);

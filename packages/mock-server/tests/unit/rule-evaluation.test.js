@@ -88,7 +88,7 @@ test('processRuleEvaluations — entity not found skips rule set entirely', () =
 // Context binding — warning: from field missing → skip binding, rule set continues
 // =============================================================================
 
-test('processRuleEvaluations — missing from field value skips binding but rule set continues', () => {
+test('processRuleEvaluations — missing from field value skips rule set entirely', () => {
   clearAll('applications');
   clearAll('tasks');
   seedQueues();
@@ -101,9 +101,9 @@ test('processRuleEvaluations — missing from field value skips binding but rule
     { assignToQueue: 'snap-intake' }
   );
 
-  // application not resolved (no subjectId) — snap condition fails — catch-all fires
+  // from path resolves to no value — error — rule set skipped — queueId stays null
   processRuleEvaluations([{ ruleType: 'assignment' }], task, rules, 'workflow');
-  assert.strictEqual(task.queueId, 'q-general');
+  assert.strictEqual(task.queueId, null);
 });
 
 // =============================================================================
