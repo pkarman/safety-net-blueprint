@@ -1,24 +1,28 @@
 $schema: ./schemas/rules-schema.yaml
 version: "1.0"
 domain: workflow
-context:
-  - task.*
+resource: workflow/tasks
 ruleSets:
   - id: workflow-assignment
     ruleType: assignment
     evaluation: first-match-wins
+    context:
+      - as: application
+        entity: intake/applications
+        from: subjectId
+        optional: true
     rules:
       - id: snap-to-snap-queue
         order: 1
         condition:
-          "==":
-            - var: task.programType
+          in:
             - snap
+            - var: application.programs
         action:
           assignToQueue: snap-intake
         fallbackAction:
           assignToQueue: general-intake
-        description: Route SNAP tasks to the SNAP intake queue.
+        description: Route tasks linked to a SNAP application to the SNAP intake queue.
       - id: default-to-general-queue
         order: 2
         condition: true
@@ -33,7 +37,7 @@ ruleSets:
         order: 1
         condition:
           "==":
-            - var: task.isExpedited
+            - var: this.isExpedited
             - true
         action:
           setPriority: expedited

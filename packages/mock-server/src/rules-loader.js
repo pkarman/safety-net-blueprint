@@ -37,7 +37,6 @@ export function discoverRules(specsDir) {
 
       results.push({
         domain: rules.domain,
-        context: rules.context || [],
         ruleSets: rules.ruleSets,
         filePath
       });
@@ -54,14 +53,14 @@ export function discoverRules(specsDir) {
  * @param {Array} allRules - Array from discoverRules()
  * @param {string} domain - Domain name (e.g., "workflow")
  * @param {string} ruleType - Rule type (e.g., "assignment")
- * @returns {{ ruleSet: Object, context: string[] } | null}
+ * @returns {{ ruleSet: Object } | null}
  */
 export function findRuleSet(allRules, domain, ruleType) {
   for (const entry of allRules) {
     if (entry.domain !== domain) continue;
     const ruleSet = entry.ruleSets.find(rs => rs.ruleType === ruleType);
     if (ruleSet) {
-      return { ruleSet, context: entry.context };
+      return { ruleSet };
     }
   }
   return null;

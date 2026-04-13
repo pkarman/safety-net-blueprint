@@ -1,6 +1,7 @@
 # JSON Schema for Rules YAML
 # Validates structural correctness. Cross-artifact references
-# (e.g., context variables resolving to real fields) are validated by the validation script.
+# (e.g., entity paths resolving to real API resources, from fields resolving to real schema
+# properties) are validated by validate-rules.js.
 
 $schema: "https://json-schema.org/draft/2020-12/schema"
 title: Rules
@@ -9,7 +10,7 @@ type: object
 required:
   - version
   - domain
-  - context
+  - resource
   - ruleSets
 additionalProperties: false
 
@@ -22,12 +23,12 @@ properties:
     type: string
     description: Domain namespace (e.g., workflow).
 
-  context:
-    type: array
-    description: Variable bindings available to rule conditions (e.g., "task.*").
-    items:
-      type: string
-    minItems: 1
+  resource:
+    type: string
+    pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+    description: >
+      The calling resource type in domain/resource format (e.g., workflow/tasks).
+      Used by validate-rules.js to resolve schema properties for from-field validation.
 
   ruleSets:
     type: array
@@ -37,6 +38,39 @@ properties:
     minItems: 1
 
 $defs:
+  ContextBinding:
+    type: object
+    description: >
+      Declares a related entity to resolve before rule evaluation. The entity is fetched
+      by ID from the declared source and made available in rule conditions under the given alias.
+      The calling resource is always available as "this" — no binding needed.
+    required: [as, entity, from]
+    properties:
+      as:
+        type: string
+        description: Alias used to reference this entity in rule conditions (e.g., "application").
+      entity:
+        type: string
+        pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+        description: >
+          Source entity in domain/resource format (e.g., intake/applications).
+          Must match an API resource path discoverable in the contracts directory.
+          Validated by validate-rules.js.
+      from:
+        type: string
+        description: >
+          Dot-path on the calling resource (or a previously resolved entity) whose value
+          is the ID to look up. Examples: "subjectId", "application.caseId".
+          Validated against the resource schema by validate-rules.js.
+      optional:
+        type: boolean
+        description: >
+          If true, resolution failure (entity not found or from path resolves to no value)
+          skips this binding and continues rule set evaluation without it.
+          If false or absent, any resolution failure skips the entire rule set.
+          Defaults to false — bindings are required unless explicitly marked optional.
+    additionalProperties: false
+
   RuleSet:
     type: object
     description: A group of rules with a shared type and evaluation strategy.
@@ -57,6 +91,14 @@ $defs:
         enum:
           - first-match-wins
         description: How rules are evaluated — first match stops.
+      context:
+        type: array
+        description: >
+          Related entities to resolve before evaluating this rule set.
+          Each binding resolves one entity by ID and makes it available under its alias.
+          The calling resource is always available as "this" without declaration.
+        items:
+          $ref: "#/$defs/ContextBinding"
       rules:
         type: array
         items:
@@ -83,6 +125,8 @@ $defs:
       condition:
         description: >
           JSON Logic expression evaluated against context variables.
+          Reference the calling resource as "this.fieldName".
+          Reference resolved entities as "alias.fieldName" (e.g., "application.programs").
           Use `true` for catch-all/default rules.
       action:
         type: object

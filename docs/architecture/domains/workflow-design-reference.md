@@ -162,6 +162,7 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 | 18 | [Metrics as YAML contract artifacts](#decision-18-metrics-as-yaml-contract-artifacts) | Metric definitions are explicit, versionable, and portable — unlike proprietary GUI dashboards. |
 | 19 | [Duration metrics via event pairs, not pre-computed fields](#decision-19-duration-metrics-via-event-pairs) | Declarative model lets metric authors define new measurements without schema changes. |
 | 20 | [Pre-aggregation is an adapter-layer concern](#decision-20-pre-aggregation-is-an-adapter-layer-concern) | On-demand computation is simpler and always current for the baseline; states add pre-aggregation in their adapters. |
+| 21 | [Rule context enrichment via explicit entity bindings](#decision-21-rule-context-enrichment-via-explicit-entity-bindings) | Rule conditions reference subject entity fields via declared bindings; the engine resolves only what is declared before evaluation. |
 
 ---
 
@@ -540,6 +541,49 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 - States building production implementations will add pre-aggregation in their adapters — the metric definitions remain the same; only the computation strategy changes.
 
 **Decision:** On-demand computation from live data for the baseline. Pre-aggregation is an adapter-layer performance optimization, not a contract concern.
+
+---
+
+### Decision 21: Rule context enrichment via explicit entity bindings
+
+**Status:** Decided
+
+**What's being decided:** How rule conditions access attributes of the subject entity (application, case) when routing or prioritizing a task, without requiring those attributes to be denormalized onto the task.
+
+**Considerations:**
+- Routing and priority rules often need subject attributes — program type, county, household size — that live on the application or case record, not the task. Requiring states to copy these fields onto the task at creation couples the task schema to the subject schema and fails when those attributes change after creation.
+- **Pega** resolves this via the clipboard: all case data is in-memory and in-scope during routing rule evaluation without any explicit step. Full live traversal is available, but the data dependencies of a rule are implicit — invisible unless you read the rule's condition logic.
+- **ServiceNow** uses dot-walking (SQL JOINs) for live traversal in conditions, but this has documented limitations in the no-code condition builder; scripted fallbacks are required for change-triggered rules.
+- **Salesforce** surfaces related record fields via cross-object formula fields — effectively live computed values — but requires an explicit `Get Records` action in Flow before conditions can reference non-formula fields.
+- **JSM** pre-loads parent/epic data into the automation context at trigger time; linked issue data requires an explicit Lookup Issues action before it can be referenced in conditions.
+- **Appian CMS** takes the most constrained approach: developers configure which related record fields are available to rule authors; the platform fetches those values at evaluation time. Rule data dependencies are explicit and bounded by configuration.
+- **IBM Cúram** passes pre-defined Workflow Data Objects (WDOs) to CER allocation rules — a structured, bounded context that the engine assembles. Arbitrary related-record access requires a custom function strategy.
+- The blueprint's rules are defined in YAML contract artifacts — the data dependencies of a rule set should be as readable as the rules themselves. Implicit live traversal (Pega/ServiceNow) makes those dependencies invisible without running the rules.
+
+**Options:**
+- **(A)** Denormalization — copy subject fields onto the task at creation. Simple to evaluate; couples task schema to subject schema; fails when subject data changes post-creation.
+- **(B)** Arbitrary live traversal — the engine resolves any related entity on demand during condition evaluation. Maximum flexibility; data dependencies are implicit and invisible in the contract artifact.
+- **(C) ✓** Explicit context bindings — rule authors declare which entities to resolve in the rules YAML (`as`, `entity`, `from`). The engine fetches only what is declared before evaluation. Data dependencies are visible in the artifact itself, not buried in condition logic.
+
+**Decision:** Explicit context bindings (C). This follows the bounded-context model of Appian and Cúram — the most portable pattern for a blueprint that states customize. Unlike denormalization, it does not couple the task schema to the subject schema. Unlike arbitrary traversal, it keeps data dependencies readable in the contract artifact. States can extend context bindings via overlay to expose additional subject fields to rules without modifying the engine.
+
+**Implementation details:**
+
+**Per-ruleSet context scope:** Context bindings are declared per-ruleSet (not globally), so each ruleSet resolves only what it needs. This matches JSM (lookup issue actions are per-automation rule), Appian CMS (related record configuration is per-allocation rule), IBM Cúram (WDOs are defined per allocation table), and Salesforce Flow (`Get Records` is placed per-flow). Pega's global clipboard — all case data always in scope — is the outlier; it maximizes flexibility at the cost of invisible data dependencies.
+
+**`this` alias for the calling resource:** The record being evaluated is always available as `this` in rule conditions without a binding declaration. This follows the universal pattern: Pega's primary page (the current case, always in scope), ServiceNow's `current` (built-in JavaScript reference), JSM's `{{issue.*}}` Smart Values (triggering issue is the base context), and Salesforce's `{!$Record.*}`. No vendor requires an explicit declaration to access the primary record.
+
+**Entity reference format (`domain/resource`):** Entities are identified in `domain/resource` format (e.g., `intake/applications`), matching CloudEvents source semantics used elsewhere in the blueprint. The collection name is the last path segment. There is no direct vendor equivalent — Pega references page classes, ServiceNow references GlideRecord tables — but the two-segment format is unique to our multi-domain contract architecture and provides namespacing without a full URI.
+
+**Chaining:** Bindings are resolved in declaration order; each binding's `from` path can reference previously resolved entities, enabling multi-hop traversal (e.g., `from: application.caseId` to resolve a case via an application). Pega and ServiceNow support arbitrary-depth dot-walking natively. JSM supports only single-level lookup. Appian CMS allows one level of related record access per rule set. IBM Cúram WDOs are flat — chaining requires defining additional WDO members. The blueprint's approach is more flexible than JSM/Appian/Cúram but bounded (declared in the contract) unlike Pega/ServiceNow's implicit traversal.
+
+**Sub-resource constraint:** Entity references must be exactly two segments (`domain/resource`). Sub-resources (e.g., `/cases/{caseId}/documents`) are not supported because entity lookup is by globally unique ID, which sub-resources lack without parent context. All major vendors (ServiceNow GlideRecord, Salesforce objects, Pega page classes) reference entities by flat type, not by hierarchical path — this constraint is consistent with industry practice.
+
+**Static validation:** `validate-rules.js` runs at `npm run validate` and checks entity paths against discoverable API resources and `from` fields against the calling resource's schema. Runtime: bindings are required by default — any resolution failure (entity not found, `from` path resolves to no value) skips the rule set and is logged as an error. Bindings marked `optional: true` skip only the failing binding (warning logged) and allow the rule set to continue without it. This is stricter than industry defaults (JSM, Salesforce Flow, Appian, and Cúram all continue with null on resolution failure), but catches misconfigured rules explicitly rather than silently routing with missing data.
+
+**Known gap:** Runtime error handling — what surfaces to callers when rule evaluation is skipped, how to distinguish degraded evaluation from no-op evaluation — is a separate design concern. See [issue #220](https://github.com/codeforamerica/safety-net-blueprint/issues/220).
+
+**Customization:** States add or replace context bindings in their overlay of `workflow-rules.yaml` to expose additional subject entity fields to rule conditions.
 
 ---
 

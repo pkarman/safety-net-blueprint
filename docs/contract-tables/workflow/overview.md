@@ -140,7 +140,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | task.programType = "snap" | Assign to **snap-intake** queue | Assign to **general-intake** queue |
+| 1 | application.programs.snap = true | Assign to **snap-intake** queue | Assign to **general-intake** queue |
 | 2 | true | Assign to **general-intake** queue | — |
 
 ### Priority

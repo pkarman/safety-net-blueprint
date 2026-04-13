@@ -28,7 +28,8 @@
   "scripts": {
     "prepack": "npm run design:reference && node ../../scripts/build-package-readme.js",
     "test": "node --test tests/unit/",
-    "validate": "npm run validate:syntax && npm run validate:patterns && npm run validate:schemas",
+    "validate": "npm run validate:syntax && npm run validate:patterns && npm run validate:schemas && npm run validate:rules",
+    "validate:rules": "node scripts/validate-rules.js --spec=.",
     "validate:schemas": "node scripts/validate-schemas.js --spec=.",
     "validate:syntax": "node scripts/validate-openapi.js --spec=.",
     "validate:lint": "npx spectral lint '*-openapi.yaml' --ignore-unknown-format",

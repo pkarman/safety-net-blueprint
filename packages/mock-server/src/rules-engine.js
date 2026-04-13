@@ -6,21 +6,25 @@
 import jsonLogic from 'json-logic-js';
 
 /**
- * Build a context object from context bindings and a resource.
- * Bindings like ["task.*"] produce { task: { ...resource } }.
- * @param {string[]} contextBindings - Array of binding expressions (e.g., ["task.*"])
- * @param {Object} resource - The resource to bind
+ * Resolve a dot-notation path against an object.
+ * @param {Object} obj - The object to traverse
+ * @param {string} path - Dot-notation path (e.g., "subjectId", "application.caseId")
+ * @returns {*} Resolved value, or undefined if not found
+ */
+export function resolvePath(obj, path) {
+  return path.split('.').reduce((cur, key) => (cur != null ? cur[key] : undefined), obj);
+}
+
+/**
+ * Build a context object for rule evaluation.
+ * The calling resource is always available as "this".
+ * Pre-resolved entities are merged in by alias.
+ * @param {Object} resource - The primary resource being evaluated
+ * @param {Object} resolvedEntities - Pre-fetched entities keyed by alias (e.g., { application: {...} })
  * @returns {Object} Context object for rule evaluation
  */
-export function buildRuleContext(contextBindings, resource) {
-  const context = {};
-  for (const binding of contextBindings || []) {
-    const match = binding.match(/^(\w+)\.\*$/);
-    if (match) {
-      context[match[1]] = { ...resource };
-    }
-  }
-  return context;
+export function buildRuleContext(resource, resolvedEntities = {}) {
+  return { this: { ...resource }, ...resolvedEntities };
 }
 
 /**
