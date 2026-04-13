@@ -5,7 +5,31 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { evaluateRuleSet, buildRuleContext } from '../../src/rules-engine.js';
+import { evaluateRuleSet, buildRuleContext, resolvePath } from '../../src/rules-engine.js';
+
+// =============================================================================
+// resolvePath
+// =============================================================================
+
+test('resolvePath — resolves single-segment path (strips namespace)', () => {
+  const resource = { subjectId: 'app-1', status: 'pending' };
+  assert.strictEqual(resolvePath(resource, 'task.subjectId'), 'app-1');
+});
+
+test('resolvePath — resolves nested path', () => {
+  const resource = { meta: { county: 'alameda' } };
+  assert.strictEqual(resolvePath(resource, 'task.meta.county'), 'alameda');
+});
+
+test('resolvePath — returns undefined for missing field', () => {
+  const resource = { status: 'pending' };
+  assert.strictEqual(resolvePath(resource, 'task.subjectId'), undefined);
+});
+
+test('resolvePath — handles path with no namespace', () => {
+  const resource = { subjectId: 'app-1' };
+  assert.strictEqual(resolvePath(resource, 'subjectId'), 'app-1');
+});
 
 // =============================================================================
 // buildRuleContext
@@ -28,6 +52,42 @@ test('buildRuleContext — handles null/empty bindings', () => {
   const resource = { id: 'task-1' };
   assert.deepStrictEqual(buildRuleContext(null, resource), {});
   assert.deepStrictEqual(buildRuleContext([], resource), {});
+});
+
+test('buildRuleContext — merges resolvedEntities into context', () => {
+  const resource = { id: 'task-1', subjectId: 'app-1' };
+  const resolvedEntities = { application: { id: 'app-1', programs: ['snap'] } };
+  const context = buildRuleContext(['task.*'], resource, resolvedEntities);
+  assert.deepStrictEqual(context.task, { id: 'task-1', subjectId: 'app-1' });
+  assert.deepStrictEqual(context.application, { id: 'app-1', programs: ['snap'] });
+});
+
+test('buildRuleContext — object-form bindings are ignored (resolved by caller)', () => {
+  const resource = { id: 'task-1' };
+  const binding = { as: 'application', entity: 'applications', from: 'task.subjectId' };
+  // Object-form bindings are not processed here — no error, just ignored
+  const context = buildRuleContext([binding], resource);
+  assert.deepStrictEqual(context, {});
+});
+
+test('evaluateRuleSet — condition references resolved entity field', () => {
+  const ruleSet = {
+    rules: [
+      {
+        id: 'snap-rule',
+        order: 1,
+        condition: { in: ['snap', { var: 'application.programs' }] },
+        action: { assignToQueue: 'snap-intake' }
+      }
+    ]
+  };
+  const context = {
+    task: { id: 'task-1', subjectId: 'app-1' },
+    application: { id: 'app-1', programs: ['snap', 'medicaid'] }
+  };
+  const result = evaluateRuleSet(ruleSet, context);
+  assert.strictEqual(result.matched, true);
+  assert.strictEqual(result.ruleId, 'snap-rule');
 });
 
 // =============================================================================

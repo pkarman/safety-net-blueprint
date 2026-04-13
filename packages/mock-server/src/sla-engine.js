@@ -60,7 +60,9 @@ function evaluateCondition(condition, data) {
  * @param {Array} slaTypes - SLA type definitions from *-sla-types.yaml
  * @param {string} now - Current datetime (ISO 8601)
  */
-export function initializeSlaInfo(resource, slaTypes, now) {
+export function initializeSlaInfo(resource, slaTypes, now, resolvedEntities = {}) {
+  const conditionData = { ...resource, ...resolvedEntities };
+
   // Collect client-provided slaTypeCodes
   const clientCodes = new Set(
     (resource.slaInfo || []).map(e => e.slaTypeCode)
@@ -71,7 +73,7 @@ export function initializeSlaInfo(resource, slaTypes, now) {
   for (const slaType of slaTypes) {
     if (!slaType.autoAssignWhen) continue;
     if (clientCodes.has(slaType.id)) continue; // already included
-    if (evaluateCondition(slaType.autoAssignWhen, resource)) {
+    if (evaluateCondition(slaType.autoAssignWhen, conditionData)) {
       autoAssigned.push({ slaTypeCode: slaType.id });
     }
   }
@@ -117,9 +119,10 @@ export function initializeSlaInfo(resource, slaTypes, now) {
  * @param {string} now - Current datetime (ISO 8601)
  * @param {Object} states - State definitions from the state machine (keyed by state name)
  */
-export function updateSlaInfo(resource, slaTypes, now, states = {}) {
+export function updateSlaInfo(resource, slaTypes, now, states = {}, resolvedEntities = {}) {
   if (!resource.slaInfo || resource.slaInfo.length === 0) return;
 
+  const conditionData = { ...resource, ...resolvedEntities };
   const nowMs = new Date(now).getTime();
   const currentStateConfig = states[resource.status] ?? {};
   const clockIsStopped = currentStateConfig.slaClock === 'stopped';
@@ -133,7 +136,7 @@ export function updateSlaInfo(resource, slaTypes, now, states = {}) {
 
     // Evaluate completedWhen (highest priority — explicit SLA type override)
     const completedWhen = slaType.completedWhen ?? null;
-    if (completedWhen !== null && evaluateCondition(completedWhen, resource)) {
+    if (completedWhen !== null && evaluateCondition(completedWhen, conditionData)) {
       entry.status = 'completed';
       entry._pausedSince = null;
       continue;
@@ -149,12 +152,12 @@ export function updateSlaInfo(resource, slaTypes, now, states = {}) {
 
     // Evaluate pauseWhen
     const shouldPause = slaType.pauseWhen
-      ? evaluateCondition(slaType.pauseWhen, resource)
+      ? evaluateCondition(slaType.pauseWhen, conditionData)
       : false;
 
     // Evaluate resumeWhen (defaults to: pauseWhen no longer true)
     const shouldResume = slaType.resumeWhen
-      ? evaluateCondition(slaType.resumeWhen, resource)
+      ? evaluateCondition(slaType.resumeWhen, conditionData)
       : !shouldPause;
 
     if (entry.status === 'paused') {
