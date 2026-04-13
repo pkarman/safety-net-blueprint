@@ -107,6 +107,46 @@ test('processRuleEvaluations — missing from field value skips rule set entirel
 });
 
 // =============================================================================
+// Optional bindings — resolution failure skips binding, not rule set
+// =============================================================================
+
+test('processRuleEvaluations — optional binding skipped when from field missing, rule set continues', () => {
+  clearAll('applications');
+  clearAll('tasks');
+  seedQueues();
+
+  const task = { id: 'task-1', queueId: null }; // no subjectId
+
+  const rules = makeRules(
+    [{ as: 'application', entity: 'intake/applications', from: 'subjectId', optional: true }],
+    { in: ['snap', { var: 'application.programs' }] },
+    { assignToQueue: 'snap-intake' }
+  );
+
+  // binding skipped (optional) — snap condition fails (no application) — catch-all fires
+  processRuleEvaluations([{ ruleType: 'assignment' }], task, rules, 'workflow');
+  assert.strictEqual(task.queueId, 'q-general');
+});
+
+test('processRuleEvaluations — optional binding skipped when entity not found, rule set continues', () => {
+  clearAll('applications');
+  clearAll('tasks');
+  seedQueues();
+
+  const task = { id: 'task-1', subjectId: 'nonexistent', queueId: null };
+
+  const rules = makeRules(
+    [{ as: 'application', entity: 'intake/applications', from: 'subjectId', optional: true }],
+    { in: ['snap', { var: 'application.programs' }] },
+    { assignToQueue: 'snap-intake' }
+  );
+
+  // binding skipped (optional) — snap condition fails (no application) — catch-all fires
+  processRuleEvaluations([{ ruleType: 'assignment' }], task, rules, 'workflow');
+  assert.strictEqual(task.queueId, 'q-general');
+});
+
+// =============================================================================
 // Chaining — from path references a previously resolved entity
 // =============================================================================
 

@@ -49,6 +49,12 @@ function resolveContextEntities(contextBindings, resource) {
     const entityId = resolvePath(lookupContext, binding.from);
 
     if (!entityId) {
+      if (binding.optional) {
+        console.warn(
+          `Context binding "${binding.as}": "${binding.from}" resolved to no value — skipping binding (optional)`
+        );
+        continue;
+      }
       console.error(
         `Context binding "${binding.as}": "${binding.from}" resolved to no value — skipping rule set`
       );
@@ -57,6 +63,12 @@ function resolveContextEntities(contextBindings, resource) {
 
     const entity = findById(collectionName, entityId);
     if (!entity) {
+      if (binding.optional) {
+        console.warn(
+          `Context binding "${binding.as}": "${binding.entity}" with id "${entityId}" not found — skipping binding (optional)`
+        );
+        continue;
+      }
       console.error(
         `Context binding "${binding.as}": "${binding.entity}" with id "${entityId}" not found — skipping rule set`
       );

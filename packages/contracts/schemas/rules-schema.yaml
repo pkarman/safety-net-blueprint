@@ -62,6 +62,13 @@ $defs:
           Dot-path on the calling resource (or a previously resolved entity) whose value
           is the ID to look up. Examples: "subjectId", "application.caseId".
           Validated against the resource schema by validate-rules.js.
+      optional:
+        type: boolean
+        description: >
+          If true, resolution failure (entity not found or from path resolves to no value)
+          skips this binding and continues rule set evaluation without it.
+          If false or absent, any resolution failure skips the entire rule set.
+          Defaults to false — bindings are required unless explicitly marked optional.
     additionalProperties: false
 
   RuleSet:
