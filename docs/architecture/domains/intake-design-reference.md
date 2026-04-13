@@ -16,7 +16,7 @@ See [Intake Domain](intake.md) for the architecture overview and [Contract-Drive
 
 ## Overview
 
-The intake domain is responsible for capturing and structuring the data a household submits when applying for benefits. It does not determine eligibility, manage ongoing cases, or deliver benefits — those are downstream domain concerns. The intake phase begins when an application is filed (starting the regulatory clock) and ends when the application data is complete enough to submit for eligibility determination — after data collection is finished (interviews conducted, documents received, verification complete), not when the applicant first clicks submit.
+The intake domain is responsible for capturing and structuring the data a household submits when applying for benefits. It does not determine eligibility, manage ongoing cases, or deliver benefits — those are downstream domain concerns. The intake phase begins when an application is filed (starting the regulatory clock) and ends when the application data is complete enough to submit for eligibility determination — after data collection is finished (interviews conducted, documents received, verification complete), not when the applicant first clicks submit. This boundary follows the regulatory processing clock (7 CFR § 273.2, 42 CFR § 435.912), which starts at filing and runs until determination regardless of who collects the data — federal regulations make no distinction between client-submitted and caseworker-entered data for purposes of defining the application processing period.
 
 **Entities owned by this domain:**
 
