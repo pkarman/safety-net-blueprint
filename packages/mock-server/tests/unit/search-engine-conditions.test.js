@@ -22,11 +22,20 @@ test('buildSearchConditions', async (t) => {
     console.log('  ✓ Produces exact-match clause for simple field');
   });
 
-  await t.test('skips reserved parameters (limit, offset, page, q, search)', () => {
-    const { whereClauses } = buildSearchConditions({ limit: '10', offset: '0', page: '1', q: 'foo', search: 'bar' });
+  await t.test('skips pagination parameters (limit, offset, page)', () => {
+    const { whereClauses } = buildSearchConditions({ limit: '10', offset: '0', page: '1' });
 
-    assert.strictEqual(whereClauses.length, 0, 'Should produce no WHERE clauses for reserved params');
-    console.log('  ✓ Skips reserved parameters');
+    assert.strictEqual(whereClauses.length, 0, 'Should produce no WHERE clauses for pagination params');
+    console.log('  ✓ Skips pagination parameters');
+  });
+
+  await t.test('search parameter produces json_tree clause', () => {
+    const { whereClauses, params } = buildSearchConditions({ search: 'bar' });
+
+    assert.strictEqual(whereClauses.length, 1);
+    assert.ok(whereClauses[0].includes('json_tree'), 'Should use json_tree for search');
+    assert.ok(params[0].includes('bar'), 'Param should contain the search term');
+    console.log('  ✓ search parameter produces json_tree clause');
   });
 
   await t.test('empty value produces no clause', () => {
