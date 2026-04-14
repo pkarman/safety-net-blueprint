@@ -125,6 +125,30 @@ See [Decision 11](#decision-11-income-and-expense-detail-at-intake).
 
 ---
 
+### ApplicationDocument
+
+A document requirement or request linked to an application. Represents a specific document type that must be collected from the household or a member before intake is complete. Created by the rules engine in response to intake events — not manually created by caseworkers under normal circumstances.
+
+Requirements are generated at two points: at submission (baseline requirements known from the programs applied for) and after external verification calls return inconclusive (conditional requirements, per ex parte rules). Household-level requirements (e.g., proof of residency) are linked to the application only. Member-level requirements (e.g., proof of income) are linked to both the application and the specific member.
+
+**Key fields:** `id`, `applicationId`, `memberId` (nullable — null for household-level requirements), `category`, `status`, `createdAt`, `updatedAt`
+
+See [Decision 14](#decision-14-document-checklist-generation).
+
+---
+
+### Interview
+
+A regulatory tracking entity representing the required SNAP interview obligation for an application. Distinct from individual appointments — one interview requirement may involve multiple appointments due to rescheduling or no-shows. The caseworker attests which appointment satisfied the interview obligation by setting `completedAt`.
+
+Intake owns this entity because the obligation is regulatory (7 CFR § 273.2(e)) and tied to the application lifecycle. The scheduling domain owns the appointment mechanics (time, location, confirmation, reminders). Intake tracks whether the regulatory requirement is satisfied, not the scheduling details.
+
+**Key fields:** `id`, `applicationId`, `appointments` (array of appointmentIds from the scheduling domain — one-to-many to accommodate reschedules), `waiverGranted`, `waiverReason`, `completedAt`
+
+See [Decision 15](#decision-15-interview-entity-model), [Decision 16](#decision-16-interview-task-creation-timing).
+
+---
+
 ## Application lifecycle
 
 ### States
@@ -171,6 +195,17 @@ Events are listed with the operational or regulatory need that drives them — t
 | `application.expedited_flagged` | SNAP requires a determination within 7 days for expedited households. The workflow domain needs to immediately escalate to a higher-priority SLA track — the standard 30-day task SLA is wrong for these cases. This is a named trigger effect, not a generic field update. | `flag-expedited` trigger | Workflow (escalate to expedited SLA) |
 | `application.withdrawn` | A withdrawn application must stop all in-flight processing immediately. Open workflow tasks must be cancelled; any scheduled interview or document request must be voided; communication must notify the household. Failing to act on this event risks processing an application the household has abandoned. | any → `withdrawn` | Workflow (cancel open tasks), Communication (withdrawal notice) |
 | `application.closed` | Signals that intake is complete and the application is ready for or has received an eligibility determination. Case Management needs this event to know when to create a service delivery case (if approved). Without it, case management has no trigger to act. | `under_review` → `closed` | Case Management (create case if approved), Eligibility |
+| `application.review_completed` | Caseworker signals that data collection is complete and the application is ready for eligibility determination. No state change — application stays `under_review` until intake receives eligibility outcomes and closes itself. Eligibility needs this event to know when to begin determination; without it, eligibility has no trigger distinct from submission. | `complete-review` trigger (no state change) | Eligibility |
+
+### Event subscriptions
+
+Events from other domains that intake reacts to:
+
+| Event | Why intake subscribes | Action |
+|---|---|---|
+| `workflow.task.claimed` | A caseworker claiming the intake review task signals they have begun active review — intake should reflect this in the application lifecycle. See [Decision 8](#decision-8-submitted--under_review-transition-trigger). | Trigger `submitted → under_review` on the linked application |
+| `eligibility.determination_complete` | Eligibility publishes outcomes per program; intake subscribes to determine when all programs are resolved and the application can be closed. See [Decision 6](#decision-6-intake-phase-end--lifecycle-state). | Trigger `close` when all programs are determined |
+| `data-exchange.service-call.completed` | Ex parte rules require electronic verification before requesting paper documents. When an external service call returns inconclusive (e.g., FDSH citizenship check), the rules engine creates conditional document requests for affected members. See [Decision 14](#decision-14-document-checklist-generation), [Decision 18](#decision-18-data-exchange-orchestration). | Rules engine creates `intake/application-documents` for affected members |
 
 ---
 
@@ -193,6 +228,11 @@ Quick reference — each decision is detailed in the section below.
 | 11 | [Income and expense detail at intake](#decision-11-income-and-expense-detail-at-intake) | Full schema, only gross income required — implementations decide how much detail to collect. |
 | 12 | [MAGI tax filing status fields](#decision-12-magi-tax-filing-status-fields) | Flat fields in the baseline — required by the MAGI household composition logic from [Decision 9](#decision-9-member-to-member-relationship-matrix-magi). |
 | 13 | [Post-submission program routing — task creation and automated eligibility](#decision-13-post-submission-program-routing--task-creation-and-automated-eligibility) | One intake task per application with per-program status — programs under automated processing marked at task creation. |
+| 14 | [Document checklist generation](#decision-14-document-checklist-generation) | Rules-driven via `all-match` rule sets with collection bindings — no hardcoded document logic in intake. |
+| 15 | [Interview entity model](#decision-15-interview-entity-model) | Dedicated Interview entity in intake — not a generic appointment type; scheduling owns mechanics, intake owns regulatory tracking. |
+| 16 | [Interview task creation timing](#decision-16-interview-task-creation-timing) | Interview task created at task claim time (when caseworker is known), not at submission. |
+| 17 | [External service verification write-backs](#decision-17-external-service-verification-write-backs) | Verification results written back to ApplicationMember (per-person), not Application. |
+| 18 | [Data exchange orchestration](#decision-18-data-exchange-orchestration) | Intake rules create `data-exchange/service-calls` resources — data exchange stays generic; field mapping lives in rules. |
 
 ---
 
@@ -229,7 +269,7 @@ Quick reference — each decision is detailed in the section below.
 **Options:**
 - **(A)** Application level only — one programs list on Application, member-level distinction inferred downstream
 - **(B)** Member level only — each ApplicationMember has a `programsApplyingFor` list; application-level programs list derived from member data
-- **(C)** ✓ Both — Application has a programs list (household intent), ApplicationMember has a `programsApplyingFor` list (individual intent); makes voluntary non-application explicit; gives eligibility a clean input
+- **(C)** ✓ Both — Application has a programs list (screening/routing flag — which programs the household intends to apply for, used at submission for queue routing, expedited screening, and automated eligibility triggering), ApplicationMember has a `programsApplyingFor` list (individual intent — which members are applying for which programs); eligibility determination operates at the member level via `programsApplyingFor`; makes voluntary non-application explicit; gives eligibility a clean input
 
 ---
 
@@ -497,6 +537,156 @@ States running RTE synchronously — completing it before the intake task is cre
 
 ---
 
+### Decision 14: Document checklist generation
+
+**Status:** Decided: B
+
+**What's being decided:** How document requirements are generated for a submitted application — whether intake hardcodes which documents are required per program, or delegates requirement generation to the rules engine.
+
+**Considerations:**
+- Document requirements vary by program, household composition, member-level attributes (income, citizenship status, assets), and state policy. No two states require identical documentation — SNAP income verification, for example, depends on what the state accepts (pay stubs, employer statements, tax returns).
+- Hardcoding requirements in intake creates a tight coupling between the domain and state policy; states cannot customize without modifying intake logic.
+- All major platforms (Cúram, Pega, Salesforce) support configurable document checklists — Pega uses dynamic "document request" case objects driven by rules; Cúram uses configurable evidence gathering scripts; Salesforce uses Flow rules to create document checklist items. None hardcode document requirements in the intake entity.
+- Ex parte rules (required by federal law for Medicaid) prohibit requesting paper documents for citizenship/immigration status until electronic sources (FDSH/SAVE) have been checked and returned inconclusive. This means citizenship document requirements cannot all be created at submission — some are conditional on a subsequent data exchange event.
+- Two trigger points for document requirement creation: (1) `application.submitted` — baseline requirements known from the programs applied for; (2) `data-exchange.service-call.completed` — conditional requirements based on electronic verification outcomes.
+
+**Rules engine design:**
+
+Document requirements are created by `all-match` rule sets (all matching rules fire, not just the first). Each rule set binds the application and, where member-level documents are needed, iterates over members using a collection binding.
+
+Household-level requirements (one per application): rule sets without collection iteration — a single `createResource` per matching rule.
+
+Member-level requirements (one per qualifying member): rule sets with a collection binding on `application.members`, using `for/in/if` iteration in the action to create one `ApplicationDocument` per member that satisfies the condition.
+
+Example structure (per-member income document):
+```yaml
+context:
+  - as: application
+    from: subject
+  - as: members
+    from: application.members
+rules:
+  - condition:
+      in: [snap, {var: application.programs}]
+    action:
+      for: member
+      in: members
+      if:
+        and:
+          - in: [snap, {var: member.programs}]
+          - "!=": [{var: member.hasIncome}, false]
+      createResource:
+        entity: intake/application-documents
+        fields:
+          applicationId: {var: application.id}
+          memberId: {var: member.id}
+          category: income
+          status: requested
+```
+
+Citizenship documents follow Option B only (no deferred status): no document is created at submission; when `data-exchange.service-call.completed` fires with result `inconclusive` for FDSH, a separate rule set creates the citizenship document request at that point.
+
+**Options:**
+- **(A)** Hardcoded in intake — document requirements defined as static program-to-document mappings in intake domain logic; simpler but not state-customizable
+- **(B)** ✓ Rules-driven — `all-match` rule sets in the workflow rules contract generate `ApplicationDocument` records; states customize via overlay; intake domain has no document requirement logic; consistent with Pega, Cúram, and Salesforce patterns
+
+**Note on rules condition language:** JSON Logic (an open spec) is the condition layer for rule set expressions. DMN (Decision Model and Notation, OMG standard) was considered — it is supported by Camunda, Red Hat Decision Manager, and Flowable — but ruled out: DMN is XML-table-based and too heavyweight for a YAML-native format. The action vocabulary (`createResource`, `triggerTransition`, `for/in` iteration) is necessarily domain-specific regardless of condition language.
+
+**Deferred:** Document category and type enum values (e.g., `residency`, `income`, `identity`, `citizenship`, `utilities_shelter`) are an implementation detail. The exact enum is defined in the `ApplicationDocument` contract implementation issue.
+
+---
+
+### Decision 15: Interview entity model
+
+**Status:** Decided: B
+
+**What's being decided:** Whether the regulatory interview requirement is modeled as a dedicated `Interview` entity in intake or as a generic appointment with `type: interview` in the scheduling domain.
+
+**Considerations:**
+- SNAP requires an interview before eligibility determination (7 CFR § 273.2(e)). The regulatory obligation is tied to the application — not to a specific appointment slot. An application that has had three canceled appointments has not yet satisfied the interview requirement.
+- The interview obligation and the appointment mechanics are separable concerns: intake owns whether the interview is satisfied; scheduling owns when and where it happens.
+- Pega Government Platform models the interview as a dedicated case type ("Interview") linked to the application — not a generic appointment. Cúram tracks interview completion as a milestone on the application record with separate scheduling for the meeting. Neither conflates the regulatory requirement with the scheduling event.
+- A generic `appointment` entity with `type: interview` in the scheduling domain would require scheduling to know about SNAP regulatory requirements — coupling scheduling to intake policy. Scheduling should not need to know that a particular appointment type satisfies a federal regulatory obligation.
+- One interview requirement may involve multiple appointments (rescheduled or no-show appointments) — one-to-many between Interview and appointments. The `Interview` entity carries an `appointments` array of appointment IDs from the scheduling domain.
+- The scheduling domain does not reference back to `Interview` — the dependency is one-directional (intake → scheduling). Scheduling creates appointments without knowing whether they are tied to an interview.
+
+**Options:**
+- **(A)** Generic appointment with `type: interview` — no Interview entity in intake; scheduling domain owns the record; intake infers completion from scheduling events; couples scheduling to intake policy
+- **(B)** ✓ Dedicated `Interview` entity in intake — intake owns the regulatory obligation; scheduling owns appointment mechanics; one-directional dependency (intake references scheduling appointment IDs); consistent with Pega and Cúram patterns
+
+---
+
+### Decision 16: Interview task creation timing
+
+**Status:** Decided: B
+
+**What's being decided:** When the caseworker interview task is created — at submission or when the caseworker claims the intake review task.
+
+**Considerations:**
+- SNAP interview is required before determination (7 CFR § 273.2(e)), but the regulation does not prescribe when the interview task must be created — only that the interview must occur before determination.
+- Creating the interview task at submission assigns it before a caseworker is known. Queue assignment happens after submission; the caseworker who will conduct the interview is not determined until the intake review task is claimed.
+- Creating the interview task when the review task is claimed means the interview task can be assigned to the claiming caseworker immediately — no unassigned floating tasks, and the interview task is linked to the caseworker's work context.
+- This is consistent with how Pega and Cúram handle interview task creation: the interview obligation exists from submission, but the scheduling artifact is created when the caseworker begins active review and a worker identity is available to assign it to.
+
+**Options:**
+- **(A)** At submission — interview task created alongside the review task; unassigned until a caseworker claims the review; interview task must be re-assigned when the review task is claimed
+- **(B)** ✓ At review task claim — intake subscribes to `workflow.task.claimed` for the review task; at claim time, a rule set creates the interview task assigned to the claiming caseworker; consistent with Pega and Cúram; matches the moment when a worker identity is known
+
+---
+
+### Decision 17: External service verification write-backs
+
+**Status:** Decided: ApplicationMember
+
+**What's being decided:** Whether verification results from external services (FDSH, IEVS, SAVE) are written back to the `Application` record or to individual `ApplicationMember` records.
+
+**Considerations:**
+- All federal external verification services operate per-person: FDSH checks citizenship and income per SSN; IEVS/The Work Number checks employment and income per SSN; SAVE checks immigration status per person. None return household-level aggregate results.
+- Medicaid real-time eligibility (RTE) is a per-person MAGI determination — each household member's income, tax filing status, and citizenship is evaluated individually. A household with three members may receive three different RTE outcomes.
+- Writing verification results to the Application would require embedding per-person data in an application-level field — either a denormalized array or a separate lookup by member ID. Both approaches duplicate what is already captured on `ApplicationMember`.
+- Writing to `ApplicationMember` is consistent with the fact that the verification inputs (SSN, citizenship status, income) already live on `ApplicationMember`. The caseworker's view is member-centric — they need to see each member's verification status when reviewing the application.
+
+**Decision:** All external service verification write-backs are to `ApplicationMember`. Each member carries its own verification status fields populated by the rules engine when `data-exchange.service-call.completed` fires. No verification result fields live on `Application`.
+
+**Deferred:** The specific fields added to `ApplicationMember` for each service (FDSH, IEVS, SAVE, SSA) — names, types, and allowed values — are implementation details defined in the `ApplicationMember` contract implementation issue.
+
+---
+
+### Decision 18: Data exchange orchestration
+
+**Status:** Decided: Rules-engine-driven via createResource
+
+**What's being decided:** How intake triggers external service calls (FDSH, IEVS, SAVE) — specifically, who is responsible for transforming ApplicationMember data into each external service's request format, and how those calls are initiated without coupling intake to the data exchange domain.
+
+**Considerations:**
+- Data exchange should not need to know about intake's data model. If data exchange handled the transformation, it would need to understand `ApplicationMember` schemas — coupling domains in a way that makes each harder to evolve independently.
+- The same challenge exists for workflow task creation and document checklist generation: those domains (workflow, intake's document requirements) also needed intake data transformed into their own resource shapes. The rules engine solved both problems with `createResource`.
+- Intake rules already have access to `ApplicationMember` fields via context bindings. The rules engine can map member fields into the data exchange request payload as part of the `createResource` action — no separate orchestration layer needed.
+- This keeps data exchange as a generic platform service: it accepts `data-exchange/service-calls` resources with a `service` identifier and a `payload`, executes the call, and emits `data-exchange.service-call.completed`. It does not know what domain triggered the call or how the payload was assembled.
+- States can customize which fields are mapped and which services are called via overlay — the mapping lives in rules, which are overlay-configurable.
+
+**Decision:** Intake rules create `data-exchange/service-calls` resources via `createResource`, with member fields mapped into the service-specific request payload. Data exchange executes the call and emits a completion event. Data exchange has no knowledge of intake entities. The field mapping and service selection live entirely in the rules contract, making them state-customizable.
+
+Example (per-member FDSH citizenship check):
+```yaml
+action:
+  for: member
+  in: members
+  createResource:
+    entity: data-exchange/service-calls
+    fields:
+      service: fdsh
+      subjectType: application-member
+      subjectId: {var: member.id}
+      payload:
+        ssn: {var: member.ssn}
+        dob: {var: member.dateOfBirth}
+        firstName: {var: member.firstName}
+        lastName: {var: member.lastName}
+```
+
+---
+
 ## Out of scope
 
 The following are explicitly not intake domain concerns:
@@ -506,9 +696,9 @@ The following are explicitly not intake domain concerns:
 | Eligibility determination | Eligibility | The intake domain collects and structures data; it does not run eligibility rules or produce approved/denied outcomes |
 | Recertification / renewal | Case Management | Triggered by an existing case nearing expiration, not a new applicant event |
 | Notices and communications | Communication | The Communication domain subscribes to intake events (`application.submitted`, `application.withdrawn`) and sends notices; intake does not own notice generation |
-| Document collection and tracking | Document Management | Intake generates tasks to collect documents; document management owns the document lifecycle |
+| Document file storage and retrieval | Document Management | Intake owns document requirement records (`ApplicationDocument`); document management owns the actual file storage, retrieval, and retention lifecycle |
 | Pre-screening / eligibility screening | Portal / UI layer | Pre-screening does not start the regulatory clock and is a portal concern; the intake domain lifecycle starts at application submission |
-| Interview scheduling | Workflow | Interviews are workflow tasks created in response to intake events; scheduling is an appointment/workflow domain concern |
+| Appointment scheduling mechanics | Scheduling | Intake owns the `Interview` entity (regulatory obligation); the scheduling domain owns appointments (time, location, confirmation, reminders). See [Decision 15](#decision-15-interview-entity-model). |
 | WIC certification | Future — WIC domain | WIC uses a clinical certification model requiring a CPA, with no federal processing deadline and participant categories not present in SNAP/Medicaid. The WIC model departs significantly enough from the intake domain model to warrant its own design when WIC support is scoped. |
 | TANF-specific intake | State overlay | Federal TANF requirements are minimal; TANF-specific intake customization is a state overlay concern |
 | Benefit delivery | Case Management | Created when eligibility is determined; owned by the case management domain |
