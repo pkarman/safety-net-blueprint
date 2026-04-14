@@ -332,7 +332,7 @@ Data Exchange emits lifecycle events on ExternalServiceCall transitions. Calling
 - For async calls, the `call.completed` event is the delivery mechanism — calling domains subscribe and receive the full result payload inline. Querying an event store to retrieve async results is inconsistent with event-driven architecture.
 - The event store retains all events as the immutable audit record, consistent with the platform CloudEvents approach.
 - A separate `/audit` endpoint is additive and can be introduced later without breaking contract changes, once access control and retention requirements are defined.
-- Result payloads contain PII. How PII in event payloads is handled — whether to include it in events, encrypt it, or strip it and require a secured fetch — is an open platform-level question. See [PII in event payloads](../../inter-domain-communication.md#open-issues) in the inter-domain communication doc.
+- Result payloads contain PII and FTI. The blueprint marks sensitive fields with `x-data-classification` so adapters know which fields require regulatory safeguards. How states implement those safeguards (encryption, access control, log masking) is an infrastructure concern. See [PII in event payloads](../../inter-domain-communication.md#pii-in-event-payloads).
 
 **Options:**
 - **(A)** Separate result endpoint — calling domains fetch results from `GET /external-service-calls/{id}/result`; creates a second retrieval path alongside event delivery

@@ -97,19 +97,16 @@ The target architecture is pub/sub with CloudEvents messages. Most implementatio
 
 ---
 
-## Open Issues
+## PII in event payloads
 
-### PII in event payloads
+Event payloads may contain PII, FTI (Federal Tax Information), or PHI (Protected Health Information). How states safeguard this data in their event infrastructure is an implementation concern, not a blueprint contract concern — the blueprint does not prescribe an encryption mechanism, access control policy, or key management approach.
 
-Event payloads for some domains — particularly Data Exchange (`call.completed`) — contain PII: income amounts, immigration status, and potentially SSNs. These events are written to the `/events` store as the immutable audit record.
+The blueprint's responsibility is to mark which fields are sensitive so that adapters know what requires protection. Schema fields carrying regulated data are annotated with `x-data-classification` (see [api-patterns.yaml](../../packages/contracts/patterns/api-patterns.yaml)). Classifications: `pii`, `fti`, `phi`.
 
-How PII should be handled in event payloads has not been decided. Options:
-
-- **Include PII in events; control access at the event store layer** — PII is stored in plaintext; access control on the `/events` endpoint determines who can read it. Simple but may not meet IRS FTI safeguarding requirements (IRS Pub. 1075) or state PII retention policies.
-- **Encrypt PII fields in event payloads** — sensitive fields are encrypted before writing to the event store; only authorized consumers hold the decryption key. Keeps the event-driven model intact but adds key management complexity.
-- **Strip PII from events; require a secured fetch for result data** — events carry only status and correlation IDs; consumers retrieve full results via a separate secured endpoint. Keeps PII off the event bus but adds a retrieval step for async consumers and contradicts the current Data Exchange decision to deliver full results inline.
-
-This must be resolved before the Data Exchange event schemas can be finalized. It may also affect event payload design in other domains that carry personal data (e.g., intake applications, communications).
+States are responsible for:
+- Applying appropriate safeguards to classified fields in event payloads (encryption, access control, log masking)
+- Meeting regulatory requirements for the classifications present in their deployment (IRS Pub. 1075 for `fti`, HIPAA for `phi`)
+- Ensuring their event store and broker infrastructure meets those requirements
 
 ---
 

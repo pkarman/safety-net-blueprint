@@ -398,6 +398,54 @@ x_events:
       - org.codeforamerica.safety-net-blueprint.intake.application.submitted.v2
 
 # =============================================================================
+# x-data-classification Convention
+# =============================================================================
+x_data_classification:
+  description: |
+    The x-data-classification OpenAPI extension marks schema fields that contain
+    sensitive or regulated data. Adapters use these annotations to identify which
+    fields require special handling — encryption, masking in logs, access control,
+    or regulatory safeguards. The blueprint defines the classification; the
+    specific safeguarding mechanism (encryption algorithm, key management, access
+    control policy) is a state infrastructure concern, not a blueprint contract concern.
+
+  values:
+    - value: pii
+      description: |
+        Personally Identifiable Information — general catch-all for names, SSNs,
+        dates of birth, addresses, and other data that directly identifies a person.
+        Governed by the Privacy Act (5 U.S.C. § 552a) and state privacy laws.
+    - value: fti
+      description: |
+        Federal Tax Information — income, tax records, and other data received from
+        IRS under 26 U.S.C. § 6103. Governed by IRS Publication 1075, which requires
+        FIPS 140-validated encryption in transit and, in cloud environments, at rest.
+    - value: phi
+      description: |
+        Protected Health Information — health and medical data governed by HIPAA.
+        Applies to Medicaid-related data and any health information received from
+        CMS FDSH or other health data sources.
+
+  usage: |
+    Apply as an array on any schema property that contains regulated data.
+    A field may carry multiple classifications if it falls under more than one regime.
+
+  example: |
+    properties:
+      ssn:
+        type: string
+        x-data-classification: [pii, fti]
+      adjustedGrossIncome:
+        type: number
+        x-data-classification: [fti]
+      immigrationStatus:
+        type: string
+        x-data-classification: [pii]
+      medicareEnrollmentStatus:
+        type: string
+        x-data-classification: [phi]
+
+# =============================================================================
 # Behavioral YAML Conventions
 # =============================================================================
 # State machine, rules, metrics, and SLA type YAML files are collectively called
