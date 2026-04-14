@@ -167,7 +167,7 @@ Cross-resource search spanning all domains. **[Details →](cross-cutting/search
 
 #### Data Exchange
 
-External service integrations — a facade for all interactions with IRS, SSA, USCIS SAVE, state wage databases, and other external data sources. **[Details →](domains/data-exchange-design-reference.md)**
+External service integrations — a facade for all interactions with IRS, SSA, USCIS SAVE, state wage databases, and other external data sources. **[Details →](domains/data-exchange.md)**
 
 | Entity | Purpose |
 |--------|---------|
@@ -322,7 +322,7 @@ Domain-specific design has been moved to separate files:
 |--------|------|
 | Workflow | [domains/workflow.md](domains/workflow.md) |
 | Case Management | [domains/case-management.md](domains/case-management.md) |
-| Data Exchange | [domains/data-exchange-design-reference.md](domains/data-exchange-design-reference.md) |
+| Data Exchange | [domains/data-exchange.md](domains/data-exchange.md) |
 | Scheduling | [domains/scheduling.md](domains/scheduling.md) |
 | Communication | [cross-cutting/communication.md](cross-cutting/communication.md) |
 | Search | [cross-cutting/search.md](cross-cutting/search.md) |
