@@ -163,6 +163,10 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 | 19 | [Duration metrics via event pairs, not pre-computed fields](#decision-19-duration-metrics-via-event-pairs) | Declarative model lets metric authors define new measurements without schema changes. |
 | 20 | [Pre-aggregation is an adapter-layer concern](#decision-20-pre-aggregation-is-an-adapter-layer-concern) | On-demand computation is simpler and always current for the baseline; states add pre-aggregation in their adapters. |
 | 21 | [Rule context enrichment via explicit entity bindings](#decision-21-rule-context-enrichment-via-explicit-entity-bindings) | Rule conditions reference subject entity fields via declared bindings; the engine resolves only what is declared before evaluation. |
+| 22 | [Event envelope as the base evaluation context for event-triggered rule sets](#decision-22-event-envelope-as-the-base-evaluation-context-for-event-triggered-rule-sets) | Consistent with CloudEvents — `this` is the event envelope; subject entity resolved via context binding. |
+| 23 | [Reactive cross-domain coordination via event subscriptions](#decision-23-reactive-cross-domain-coordination-via-event-subscriptions) | Rule sets with `on:` subscribe to domain events; no synchronous cross-domain calls. |
+| 24 | [Generic platform action types with named schemas in rules-schema.yaml](#decision-24-generic-platform-action-types-with-named-schemas-in-rules-schemayaml) | `createResource` and `triggerTransition` defined once; any domain's rules can use them without duplicating schema definitions. |
+| 25 | [JSON Logic as the rule condition expression language](#decision-25-json-logic-as-the-rule-condition-expression-language) | Open spec, already used for guards and SLA conditions, 3× more popular than the next alternative; collection iteration handled at the action layer. |
 
 ---
 
@@ -646,6 +650,47 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 **`on:` as discriminator (no separate `kind` field):** The presence of the `on:` field distinguishes event-triggered rule sets from on-demand sets. No separate `kind:` field is needed — `on:` being present IS the trigger declaration, following the principle that a single field should carry one meaning. JSON Schema `if/then` can enforce constraints specific to each mode.
 
 **Customization:** States add custom action types by using `additionalProperties: true` on the `action` field — the schema validates known types strictly but does not reject unknown ones. States implement custom action handlers in their adapter layer and register them alongside the platform registry.
+
+---
+
+### Decision 25: JSON Logic as the rule condition expression language
+
+**Status:** Decided: JSON Logic
+
+**What's being decided:** Which expression language is used for rule conditions, guards, and filter predicates across the blueprint — and whether to adopt an existing open format or define a bespoke one.
+
+**Background:**
+
+The blueprint uses a condition expression language in three places already: state machine guards (`when` conditions on transitions), SLA `pauseWhen`/`resumeWhen` conditions, and metric `filter` predicates. Consistency across all three points means the condition language choice is not isolated to rules — it affects the entire contract surface.
+
+**Alternatives considered:**
+
+**json-rules-engine native format** — the most popular JavaScript rules engine library (~367K weekly npm downloads). Rules are defined as JSON with a `fact`/`operator`/`value` structure:
+```json
+{ "fact": "application", "path": "$.programs", "operator": "contains", "value": "snap" }
+```
+Readable, YAML-serializable, and the library provides a working execution engine. However: the condition format is library-coupled — rules written in this format require json-rules-engine to execute; there is no independent open spec. Collection iteration (per-member rule evaluation) is not supported natively — the library fires once per rule invocation, not once per item. Additionally, the blueprint already uses JSON Logic for guards and SLA conditions; adopting a second format for rule conditions would require authors to learn two syntaxes.
+
+**DMN/FEEL** — an OMG standard (same body as BPMN/UML) with broad enterprise tooling support (Camunda, Flowable, Red Hat Decision Manager, Apache KIE). Decision tables are a well-understood construct for policy staff. However: DMN is XML-based with no YAML representation; the ecosystem requires a Java runtime; collection iteration requires BPMN integration; and the format is far heavier than needed for YAML-native contract files.
+
+**OpenFisca / PolicyEngine** — Python microsimulation frameworks used in France, Australia, and for US SNAP/Medicaid research (PolicyEngine). Well-suited for calculating eligibility outcomes across populations. However: the computation logic is Python, not YAML-serializable; there is no action/effect model; it is designed for microsimulation (does my household qualify?) not workflow routing (which queue should this task go to?).
+
+**Catala** — a research programming language for encoding statutory text with formal verification properties (used for French family benefits, US IRC §121). Not YAML-serializable, minimal production adoption, no action model.
+
+**OPA/Rego** — CNCF standard for policy-as-code, widely used in cloud-native infrastructure (Kubernetes admission, API authorization). Returns structured JSON decisions that consumers act on. Rego is a custom declarative language, not YAML-native, and OPA is a decision engine only — no action/effect model.
+
+**Considerations:**
+- JSON Logic (~1.24M weekly npm downloads) is 3× more widely used than json-rules-engine and is an open spec at [jsonlogic.com](https://jsonlogic.com/) — not tied to any library or runtime
+- The blueprint already uses JSON Logic for state machine guards (`callerIsApplicant`, `callerIsCaseworker`), SLA `pauseWhen`/`resumeWhen` conditions, and metric filters — introducing a second language for rule conditions would create a split vocabulary across the same contract surface
+- No evaluated alternative covers all requirements: YAML-native format, open spec (not library-coupled), working across conditions and filters, and practical without a Java or Python runtime dependency
+- Collection iteration (evaluating a rule once per household member, not once per rule invocation) is a gap in JSON Logic itself — none of the alternatives solve it at the condition layer either. This is handled at the action layer via `for/in/if` iteration syntax, independent of the condition language choice
+
+**Options:**
+- **(A)** json-rules-engine native format — readable, has a working execution engine, but library-coupled and requires a second syntax alongside existing JSON Logic usage
+- **(B)** DMN/FEEL — standards-body-backed, enterprise tooling, but XML-bound, Java-ecosystem-dependent, and too heavyweight for YAML-native contracts
+- **(C) ✓** JSON Logic — open spec, already in use across guards and SLA conditions, 3× more popular than the next alternative, YAML-serializable, runtime-agnostic; collection iteration handled at the action layer via `for/in/if`
+
+**Decision:** JSON Logic (C). Consistency across the contract surface (guards, SLA conditions, metric filters, rule conditions all use the same language) is a stronger argument than any feature advantage of the alternatives. The collection iteration gap exists regardless of which condition language is chosen and is addressed separately at the action layer.
 
 ---
 
