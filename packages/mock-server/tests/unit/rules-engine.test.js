@@ -5,7 +5,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { evaluateRuleSet, buildRuleContext, resolvePath } from '../../src/rules-engine.js';
+import { evaluateRuleSet, evaluateAllMatchRuleSet, buildRuleContext, resolvePath } from '../../src/rules-engine.js';
 
 // =============================================================================
 // resolvePath
@@ -181,6 +181,59 @@ test('evaluateRuleSet — handles null/empty ruleSet', () => {
   assert.deepStrictEqual(evaluateRuleSet({}, {}), { matched: false });
   assert.deepStrictEqual(evaluateRuleSet({ rules: [] }, {}), { matched: false });
 });
+
+// =============================================================================
+// evaluateAllMatchRuleSet
+// =============================================================================
+
+test('evaluateAllMatchRuleSet — returns all matching rules, not just first', () => {
+  const ruleSet = {
+    rules: [
+      { id: 'snap-doc', order: 1, condition: { in: ['snap', { var: 'application.programs' }] }, action: { setPriority: 'expedited' } },
+      { id: 'medicaid-doc', order: 2, condition: { in: ['medicaid', { var: 'application.programs' }] }, action: { setPriority: 'high' } },
+      { id: 'no-match', order: 3, condition: { '==': [1, 2] }, action: { setPriority: 'low' } }
+    ]
+  };
+  const context = buildRuleContext({}, { application: { programs: ['snap', 'medicaid'] } });
+  const results = evaluateAllMatchRuleSet(ruleSet, context);
+  assert.strictEqual(results.length, 2);
+  assert.strictEqual(results[0].ruleId, 'snap-doc');
+  assert.strictEqual(results[1].ruleId, 'medicaid-doc');
+});
+
+test('evaluateAllMatchRuleSet — returns empty array when no rules match', () => {
+  const ruleSet = {
+    rules: [
+      { id: 'snap-doc', order: 1, condition: { in: ['snap', { var: 'application.programs' }] }, action: {} }
+    ]
+  };
+  const context = buildRuleContext({}, { application: { programs: ['medicaid'] } });
+  assert.deepStrictEqual(evaluateAllMatchRuleSet(ruleSet, context), []);
+});
+
+test('evaluateAllMatchRuleSet — handles null/empty ruleSet', () => {
+  assert.deepStrictEqual(evaluateAllMatchRuleSet(null, {}), []);
+  assert.deepStrictEqual(evaluateAllMatchRuleSet({}, {}), []);
+  assert.deepStrictEqual(evaluateAllMatchRuleSet({ rules: [] }, {}), []);
+});
+
+test('evaluateAllMatchRuleSet — catch-all with condition: true matches alongside specific rules', () => {
+  const ruleSet = {
+    rules: [
+      { id: 'snap-rule', order: 1, condition: { in: ['snap', { var: 'application.programs' }] }, action: { setPriority: 'expedited' } },
+      { id: 'catch-all', order: 2, condition: true, action: { setPriority: 'normal' } }
+    ]
+  };
+  const context = buildRuleContext({}, { application: { programs: ['snap'] } });
+  const results = evaluateAllMatchRuleSet(ruleSet, context);
+  assert.strictEqual(results.length, 2);
+  assert.strictEqual(results[0].ruleId, 'snap-rule');
+  assert.strictEqual(results[1].ruleId, 'catch-all');
+});
+
+// =============================================================================
+// evaluateRuleSet — boolean equality with isExpedited via "this"
+// =============================================================================
 
 test('evaluateRuleSet — boolean equality with isExpedited via "this"', () => {
   const ruleSet = {
