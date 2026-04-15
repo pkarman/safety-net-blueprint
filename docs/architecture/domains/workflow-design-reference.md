@@ -585,7 +585,9 @@ Metrics are defined as YAML contract artifacts in `workflow-metrics.yaml`, along
 
 **Static validation:** `validate-rules.js` runs at `npm run validate` and checks entity paths against discoverable API resources and `from` fields against the calling resource's schema. Runtime: bindings are required by default — any resolution failure (entity not found, `from` path resolves to no value) skips the rule set and is logged as an error. Bindings marked `optional: true` skip only the failing binding (warning logged) and allow the rule set to continue without it. This is stricter than industry defaults (JSM, Salesforce Flow, Appian, and Cúram all continue with null on resolution failure), but catches misconfigured rules explicitly rather than silently routing with missing data.
 
-**Event-triggered rule sets:** The same context enrichment model applies to event-triggered rule sets. The event envelope is `this` — `this.subject`, `this.type`, `this.source`, `this.data.*`. Context bindings resolve related entities from the envelope fields using `from: subject` (the standard CloudEvents subject field, typically the affected resource ID). There is no separate "event context" namespace; rules access the envelope as the primary record and resolve everything else through explicit bindings.
+**`from` as JSON Logic:** The `from` field accepts a JSON Logic expression evaluated against the current context (`this` for the calling resource or event envelope, previously resolved entities for chained bindings). Bare dot-paths (`from: subject`) are shorthand for `{var: "subject"}` — both forms are valid, but the JSON Logic form is preferred for consistency with condition expressions and for computed paths. Examples: `from: {var: "subject"}` resolves the event subject; `from: {var: "application.members"}` traverses a relationship on a previously resolved entity.
+
+**Event-triggered rule sets:** The same context enrichment model applies to event-triggered rule sets. The event envelope is `this` — `this.subject`, `this.type`, `this.source`, `this.data.*`. Context bindings resolve related entities from the envelope fields using `from: {var: "subject"}` (the standard CloudEvents subject field, typically the affected resource ID). There is no separate "event context" namespace; rules access the envelope as the primary record and resolve everything else through explicit bindings.
 
 **Known gap:** Runtime error handling — what surfaces to callers when rule evaluation is skipped, how to distinguish degraded evaluation from no-op evaluation — is a separate design concern. See [issue #220](https://github.com/codeforamerica/safety-net-blueprint/issues/220).
 
@@ -691,6 +693,8 @@ Readable, YAML-serializable, and the library provides a working execution engine
 - **(C) ✓** JSON Logic — open spec, already in use across guards and SLA conditions, 3× more popular than the next alternative, YAML-serializable, runtime-agnostic; collection iteration handled at the action layer via `for/in/if`
 
 **Decision:** JSON Logic (C). Consistency across the contract surface (guards, SLA conditions, metric filters, rule conditions all use the same language) is a stronger argument than any feature advantage of the alternatives. The collection iteration gap exists regardless of which condition language is chosen and is addressed separately at the action layer.
+
+**Design principle applied:** Maximize standard library usage before going custom. JSON Logic's native operators (`filter`, `map`, `some`, `all`, `none`, `reduce`) cover the majority of collection and conditional expression needs. Context binding `from` paths are expressed as JSON Logic (`{var: "subject"}`, `{var: "application.members"}`) rather than a custom dot-path parser. Custom extensions (e.g., `each:` for action-layer iteration) are introduced only where the expression language cannot model a side-effecting operation by design — not as a shortcut.
 
 ---
 
