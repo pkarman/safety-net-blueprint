@@ -721,6 +721,25 @@ schema_patterns:
       enum: Define allowed values
       description: Current status of the resource
 
+    # Enum extensibility via overlay
+    enum_extensibility:
+      principle: |
+        Use enum for domain values in the base blueprint. States that need additional
+        values extend the enum via overlay — that is what the overlay process is for.
+        Do NOT default to open string "for extensibility"; that sacrifices validation
+        and contract clarity unnecessarily.
+      applies_to: |
+        Status fields, disposition fields, type classifiers (taskType, serviceType,
+        failureReason, callMode), event data payload fields, request body fields.
+      example: |
+        # Base blueprint defines known values as enum:
+        disposition:
+          type: string
+          enum: [approved, denied, referred]
+          description: |
+            Outcome of the intake review. States add values via overlay
+            (e.g., pending_appeal, referred_to_snap_only).
+
   # Schema variants for CRUD
   schema_variants:
     base:
