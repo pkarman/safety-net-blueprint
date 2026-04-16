@@ -190,6 +190,18 @@ function deriveCollectionName(path, basePath) {
     : path;
   const segments = resourcePath.split('/').filter(s => s && !s.startsWith('{'));
   const lastSegment = segments[segments.length - 1] || '';
+
+  // Sub-collection paths (2+ non-param segments, last is plural) are prefixed with the parent
+  // resource singular to avoid cross-domain DB collection name collisions.
+  // e.g., /applications/{id}/documents → 'application-documents'
+  // Singleton sub-resources (singular last segment) use simple pluralization.
+  // e.g., /applications/{id}/interview → 'interviews'
+  if (segments.length >= 2 && lastSegment.endsWith('s')) {
+    const parentSegment = segments[segments.length - 2];
+    const parentSingular = parentSegment.endsWith('s') ? parentSegment.slice(0, -1) : parentSegment;
+    return `${parentSingular}-${lastSegment}`;
+  }
+
   // Pluralize singleton segment names so they match the DB collection convention
   return lastSegment && !lastSegment.endsWith('s') ? `${lastSegment}s` : lastSegment;
 }
@@ -199,11 +211,11 @@ function deriveCollectionName(path, basePath) {
  * @param {Object} app - Express app
  * @param {Object} apiMetadata - API metadata from OpenAPI spec
  * @param {string} baseUrl - Base URL for Location headers
- * @param {Object|null} stateMachine - State machine contract for this API's domain (null if none)
+ * @param {Array} stateMachines - State machine entries for this API's domain (from discoverStateMachines)
  * @param {Array|null} rules - Rules for this API's domain (null if none)
  * @returns {Array} Array of registered endpoint info
  */
-export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, slaTypes = []) {
+export function registerRoutes(app, apiMetadata, baseUrl, stateMachines, rules, slaTypes = []) {
   const registeredEndpoints = [];
 
   console.log(`  Registering routes for ${apiMetadata.title}...`);
@@ -233,9 +245,14 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, s
       description = 'List/search resources';
     } else if (method === 'post' && isCollectionEndpoint(endpoint.path)) {
       // POST /resources - Create
-      // Only pass state machine to the collection that matches the governed object
-      const smForEndpoint = stateMachine?.object?.toLowerCase() + 's' === collectionName
-        ? stateMachine : null;
+      // Only pass state machine to the collection that matches the governed object.
+      // Use kebab-plural comparison to handle multi-word names (ApplicationDocument → application-documents).
+      const smEntry = (Array.isArray(stateMachines) ? stateMachines : []).find(s => {
+        const obj = s.object;
+        return obj?.toLowerCase() + 's' === collectionName ||
+          obj?.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase() + 's' === collectionName;
+      });
+      const smForEndpoint = smEntry?.stateMachine || null;
       const domainSlaTypes = smForEndpoint ? findSlaTypes(slaTypes, smForEndpoint.domain) : [];
       handler = createCreateHandler(apiMetadata, endpointWithCollection, baseUrl, smForEndpoint, rules, domainSlaTypes);
       description = 'Create resource';
@@ -317,8 +334,12 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, s
       description = 'Get resource by ID';
     } else if (method === 'patch' && isItemEndpoint(endpoint.path)) {
       // PATCH /resources/{id} - Update
-      const smForEndpoint = stateMachine?.object?.toLowerCase() + 's' === collectionName
-        ? stateMachine : null;
+      const smEntry = (Array.isArray(stateMachines) ? stateMachines : []).find(s => {
+        const obj = s.object;
+        return obj?.toLowerCase() + 's' === collectionName ||
+          obj?.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase() + 's' === collectionName;
+      });
+      const smForEndpoint = smEntry?.stateMachine || null;
       handler = createUpdateHandler(apiMetadata, endpointWithCollection, smForEndpoint, rules);
       description = 'Update resource';
     } else if (method === 'delete' && isItemEndpoint(endpoint.path)) {
@@ -372,10 +393,9 @@ export function registerAllRoutes(app, apiSpecs, baseUrl, stateMachines = [], ru
   }
 
   for (const apiSpec of apiSpecs) {
-    // Match state machine and rules by domain name
-    const sm = stateMachines.find(s => s.domain === apiSpec.name);
-    const matchedStateMachine = sm ? sm.stateMachine : null;
-    const endpoints = registerRoutes(app, apiSpec, baseUrl, matchedStateMachine, rules, slaTypes);
+    // Pass all state machines for this domain — there may be more than one (e.g., Application + ApplicationDocument)
+    const domainSMs = stateMachines.filter(s => s.domain === apiSpec.name);
+    const endpoints = registerRoutes(app, apiSpec, baseUrl, domainSMs, rules, slaTypes);
     allEndpoints.push({
       apiName: apiSpec.name,
       title: apiSpec.title,

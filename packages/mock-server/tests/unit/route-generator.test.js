@@ -461,10 +461,10 @@ test('Route Generator Tests', async (t) => {
     console.log('  ✓ Singleton PATCH registered as update singleton sub-resource');
   });
 
-  await t.test('registerRoutes - derives sub-collection name as child (not parent) resource', () => {
-    // GET /applications/{applicationId}/documents should use "documents" collection, not "applications"
-    // When the parent application doesn't exist, the handler returns 404 (parent not found),
-    // confirming it correctly identifies "applications" as the parent collection.
+  await t.test('registerRoutes - derives sub-collection name as parent-prefixed (not bare child)', () => {
+    // GET /applications/{applicationId}/documents → collection 'application-documents', not 'documents'.
+    // Prefix prevents cross-domain DB collisions. Verified by checking parent existence:
+    // a missing parent returns 404, confirming "applications" is correctly the parent collection.
     const app = createMockApp();
     const metadata = createTestMetadata([
       { path: '/applications/{applicationId}/documents', method: 'get', operationId: 'listDocuments' }
@@ -481,7 +481,7 @@ test('Route Generator Tests', async (t) => {
     routes[0].handler(mockReq, mockRes);
     // Parent doesn't exist → 404 from parent collection check (not 500 from wrong collection)
     assert.strictEqual(statusCode, 404);
-    console.log('  ✓ Sub-collection GET uses child collection "documents"');
+    console.log('  ✓ Sub-collection GET uses prefixed collection "application-documents"');
   });
 
   await t.test('registerRoutes - singleton handler returns 404 when no record exists for parent', () => {

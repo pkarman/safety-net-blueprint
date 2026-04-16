@@ -264,3 +264,26 @@ ruleSets:
           Write eligibility determination outcome back to ApplicationMember.programDeterminations.
           Informational write-back only — does not trigger application close. Medicaid RTE results
           may arrive before intake closes; SNAP results typically arrive after.
+  - id: status-transition
+    evaluation: first-match-wins
+    rules:
+      - id: rule-1
+        order: 1
+        condition:
+          and:
+            - "!=":
+                - var: application.id
+                - null
+            - "==":
+                - var: task.taskType
+                - application_review
+            - "==":
+                - var: application.status
+                - submitted
+        action:
+          triggerTransition:
+            entity: intake/applications
+            idFrom: application.id
+            transition: open
+        description: |
+          When a caseworker claims an application_review task, transition the linked application from submitted to under_review. Guards on the intake open transition enforce that only system-role callers can execute this.

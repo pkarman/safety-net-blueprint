@@ -12,7 +12,7 @@
  */
 
 import { eventBus } from './event-bus.js';
-import { create, update, findAll } from './database-manager.js';
+import { create, update, findAll, findById } from './database-manager.js';
 import { buildRuleContext, evaluateRuleSet, evaluateAllMatchRuleSet, resolvePath } from './rules-engine.js';
 import { resolveContextEntities } from './handlers/rule-evaluation.js';
 import { executeActions } from './action-handlers.js';
@@ -45,10 +45,14 @@ function eventTypeMatches(eventType, onValue) {
  */
 function findStateMachineForEntity(entity, allStateMachines) {
   const [domainName, collectionName] = entity.split('/');
-  const match = allStateMachines.find(sm =>
-    sm.domain === domainName &&
-    sm.object.toLowerCase() + 's' === collectionName
-  );
+  const match = allStateMachines.find(sm => {
+    if (sm.domain !== domainName) return false;
+    // Convert PascalCase object name to kebab-plural: ApplicationDocument → application-documents
+    const kebabPlural = sm.object
+      .replace(/([a-z])([A-Z])/g, '$1-$2')
+      .toLowerCase() + 's';
+    return kebabPlural === collectionName;
+  });
   return match?.stateMachine || null;
 }
 
@@ -89,8 +93,9 @@ function buildPlatformDeps(ruleContext, allRules, allStateMachines, allSlaTypes)
       }
     },
 
-    // For triggerTransition
+    // For triggerTransition / appendToArray
     resolvePath,
+    dbFindById: findById,
     executeTransition: (opts) => executeTransition({ ...opts, allRules, allSlaTypes })
   };
 }

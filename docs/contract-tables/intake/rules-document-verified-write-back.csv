@@ -1,0 +1,6 @@
+Order,Condition,Action,Fallback,Description
+1,"{""!="":[{""var"":""document.id""},null]}","{""triggerTransition"":{""entity"":""intake/application-documents"",""idFrom"":""document.id"",""transition"":""verify""}}",,"Transition the ApplicationDocument to verified when document-management reports
+successful verification. The optional binding means rule set evaluation continues
+even if the document ID in the event does not match an intake ApplicationDocument
+(e.g., the document belongs to a different domain's checklist).
+"
