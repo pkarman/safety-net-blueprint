@@ -12,19 +12,141 @@ import { createTransitionHandler } from './handlers/transition-handler.js';
 import { createSearchHandler } from './handlers/search-handler.js';
 import { createMetricsListHandler, createMetricsGetHandler } from './handlers/metrics-handler.js';
 import { findSlaTypes } from './sla-loader.js';
+import { findAll, update } from './database-manager.js';
+import { emitEvent } from './emit-event.js';
 
 /**
- * Determine if a path is a collection endpoint (no {id} parameter)
+ * Determine if a path is a flat collection endpoint (no path parameters).
+ * e.g., /applications
  */
 function isCollectionEndpoint(path) {
   return !path.includes('{') && !path.includes('}');
 }
 
 /**
- * Determine if a path is an item endpoint (has {id} parameter)
+ * Determine if a path is a flat item endpoint (exactly one {param}, last segment).
+ * e.g., /applications/{applicationId}
  */
 function isItemEndpoint(path) {
-  return path.includes('{') && path.includes('}');
+  const params = path.match(/\{[^}]+\}/g) || [];
+  return params.length === 1 && path.trimEnd().endsWith('}');
+}
+
+/**
+ * Determine if a path is a sub-resource endpoint — a parent {param} precedes a
+ * literal final segment. Matches both sub-collections and singletons.
+ * e.g., /applications/{applicationId}/documents
+ *       /applications/{applicationId}/interview
+ */
+function isSubResourceEndpoint(path) {
+  return path.includes('{') && !path.trimEnd().endsWith('}');
+}
+
+/**
+ * Determine if a path is a sub-item endpoint — ends with a {param} and has
+ * more than one path parameter (at least one parent + the sub-resource id).
+ * e.g., /applications/{applicationId}/documents/{documentId}
+ */
+function isSubItemEndpoint(path) {
+  const params = path.match(/\{[^}]+\}/g) || [];
+  return path.trimEnd().endsWith('}') && params.length > 1;
+}
+
+/**
+ * Determine whether a sub-resource endpoint is a singleton (singular last segment)
+ * vs. a sub-collection (plural last segment ending in 's').
+ * Convention: collections use plural names; singletons use singular.
+ * e.g., /applications/{applicationId}/interview → singleton (singular)
+ *       /applications/{applicationId}/documents → collection (plural)
+ */
+function isSingletonSubResource(path) {
+  const segments = path.split('/').filter(s => s && !s.startsWith('{'));
+  const lastSegment = segments[segments.length - 1];
+  return Boolean(lastSegment && !lastSegment.endsWith('s'));
+}
+
+/**
+ * Extract the parent path parameter name from a sub-resource path.
+ * e.g., /intake/applications/{applicationId}/documents → 'applicationId'
+ */
+function extractParentParam(path) {
+  const match = path.match(/\{([^}]+)\}/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Create a GET handler for a singleton sub-resource.
+ * Looks up the resource by parent field value (e.g., applicationId) rather than by its own id.
+ */
+function createSingletonGetHandler(endpoint, parentParam, parentField) {
+  const resourceLabel = endpoint.collectionName.replace(/s$/, '');
+  return (req, res) => {
+    try {
+      const parentId = req.params[parentParam];
+      const { items } = findAll(endpoint.collectionName, { [parentField]: parentId }, { limit: 1 });
+      if (items.length === 0) {
+        return res.status(404).json({
+          code: 'NOT_FOUND',
+          message: `${capitalize(resourceLabel)} not found`
+        });
+      }
+      res.json(items[0]);
+    } catch (error) {
+      console.error('Singleton get handler error:', error);
+      res.status(500).json({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', details: [{ message: error.message }] });
+    }
+  };
+}
+
+/**
+ * Create a PATCH handler for a singleton sub-resource.
+ * Resolves the resource by parent field, then applies the standard update.
+ */
+function createSingletonUpdateHandler(apiMetadata, endpoint, parentParam, parentField) {
+  const resourceLabel = endpoint.collectionName.replace(/s$/, '');
+  return (req, res) => {
+    try {
+      const parentId = req.params[parentParam];
+      const { items } = findAll(endpoint.collectionName, { [parentField]: parentId }, { limit: 1 });
+      if (items.length === 0) {
+        return res.status(404).json({ code: 'NOT_FOUND', message: `${capitalize(resourceLabel)} not found` });
+      }
+      const existing = items[0];
+
+      if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+        return res.status(400).json({ code: 'BAD_REQUEST', message: 'Request body must be a JSON object', details: [{ field: 'body', message: 'must be object' }] });
+      }
+      if (Object.keys(req.body).length === 0) {
+        return res.status(400).json({ code: 'BAD_REQUEST', message: 'Request body must contain at least one field to update', details: [{ field: 'body', message: 'minProperties: 1' }] });
+      }
+
+      const updated = update(endpoint.collectionName, existing.id, req.body);
+
+      try {
+        const domain = apiMetadata.serverBasePath.replace(/^\//, '');
+        emitEvent({
+          domain,
+          object: resourceLabel,
+          action: 'updated',
+          resourceId: existing.id,
+          source: apiMetadata.serverBasePath,
+          data: { changes: [] },
+          callerId: req.headers['x-caller-id'] || null,
+          traceparent: req.headers['traceparent'] || null,
+          now: updated.updatedAt,
+        });
+      } catch (e) { /* non-fatal */ }
+
+      res.json(updated);
+    } catch (error) {
+      console.error('Singleton update handler error:', error);
+      res.status(500).json({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', details: [{ message: error.message }] });
+    }
+  };
+}
+
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
 /**
@@ -37,17 +159,28 @@ function convertPathFormat(path) {
 
 /**
  * Derive the database collection name from an endpoint path.
- * Strips the server base path prefix before extracting the first resource segment.
- * E.g., "/workflow/tasks/{taskId}" with basePath "/workflow" → "tasks".
+ * Returns the last non-parameter segment after stripping the server base path.
+ * For sub-resources this is the child collection, not the parent.
+ * Singular segments are pluralized (e.g. "interview" → "interviews") to match
+ * the convention used by the rules engine when creating those resources.
+ *
+ * E.g., "/intake/applications/{applicationId}/documents/{documentId}"
+ *        with basePath "/intake" → "documents"
+ *       "/intake/applications/{applicationId}/interview"
+ *        with basePath "/intake" → "interviews"
+ *
  * @param {string} path - OpenAPI path (possibly prefixed with serverBasePath)
- * @param {string} [basePath] - Server base path to strip (e.g., "/workflow")
+ * @param {string} [basePath] - Server base path to strip (e.g., "/intake")
  * @returns {string} Collection name for database operations
  */
 function deriveCollectionName(path, basePath) {
   const resourcePath = basePath && path.startsWith(basePath)
     ? path.slice(basePath.length)
     : path;
-  return resourcePath.split('/')[1];
+  const segments = resourcePath.split('/').filter(s => s && !s.startsWith('{'));
+  const lastSegment = segments[segments.length - 1] || '';
+  // Pluralize singleton segment names so they match the DB collection convention
+  return lastSegment && !lastSegment.endsWith('s') ? `${lastSegment}s` : lastSegment;
 }
 
 /**
@@ -73,7 +206,9 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, s
     let handler = null;
     let description = '';
 
-    // Determine handler based on method and path type
+    // Determine handler based on method and path type.
+    // Check order matters: sub-resource/sub-item checks must come before the flat
+    // item check because both contain '{' parameters.
     if (endpoint.operationId === 'streamEvents') {
       // Handled by manual registration in server.js before routes are registered
       continue;
@@ -85,10 +220,6 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, s
       // GET /resources - List/search
       handler = createListHandler(apiMetadata, endpointWithCollection);
       description = 'List/search resources';
-    } else if (method === 'get' && isItemEndpoint(endpoint.path)) {
-      // GET /resources/{id} - Get by ID
-      handler = createGetHandler(apiMetadata, endpointWithCollection);
-      description = 'Get resource by ID';
     } else if (method === 'post' && isCollectionEndpoint(endpoint.path)) {
       // POST /resources - Create
       // Only pass state machine to the collection that matches the governed object
@@ -97,6 +228,63 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, s
       const domainSlaTypes = smForEndpoint ? findSlaTypes(slaTypes, smForEndpoint.domain) : [];
       handler = createCreateHandler(apiMetadata, endpointWithCollection, baseUrl, smForEndpoint, rules, domainSlaTypes);
       description = 'Create resource';
+    } else if (isSubResourceEndpoint(endpoint.path)) {
+      // Sub-resource endpoint: /resources/{parentId}/sub or /resources/{parentId}/sub/{subId}
+      // Last path segment is a literal (not a {param}).
+      const parentParam = extractParentParam(endpoint.path);
+      const parentField = parentParam; // URL param name == field name on the sub-resource
+      if (isSingletonSubResource(endpoint.path)) {
+        // Singleton: at most one child per parent (e.g., /applications/{applicationId}/interview)
+        if (method === 'get') {
+          handler = createSingletonGetHandler(endpointWithCollection, parentParam, parentField);
+          description = 'Get singleton sub-resource';
+        } else if (method === 'patch') {
+          handler = createSingletonUpdateHandler(apiMetadata, endpointWithCollection, parentParam, parentField);
+          description = 'Update singleton sub-resource';
+        } else {
+          console.warn(`    Warning: Unsupported method ${method.toUpperCase()} on singleton ${endpoint.path}`);
+          continue;
+        }
+      } else {
+        // Sub-collection: /resources/{parentId}/subResources — inject parent ID into query/body
+        if (method === 'get') {
+          const baseListHandler = createListHandler(apiMetadata, endpointWithCollection);
+          handler = (req, res) => {
+            req.query[parentField] = req.params[parentParam];
+            return baseListHandler(req, res);
+          };
+          description = 'List sub-resources';
+        } else if (method === 'post') {
+          const baseCreateHandler = createCreateHandler(apiMetadata, endpointWithCollection, baseUrl, null, null, []);
+          handler = (req, res) => {
+            req.body = { ...(req.body || {}), [parentField]: req.params[parentParam] };
+            return baseCreateHandler(req, res);
+          };
+          description = 'Create sub-resource';
+        } else {
+          console.warn(`    Warning: Unsupported method ${method.toUpperCase()} on sub-collection ${endpoint.path}`);
+          continue;
+        }
+      }
+    } else if (isSubItemEndpoint(endpoint.path)) {
+      // Sub-item: /resources/{parentId}/sub/{subId} — standard item handlers, correct collection
+      if (method === 'get') {
+        handler = createGetHandler(apiMetadata, endpointWithCollection);
+        description = 'Get sub-resource by ID';
+      } else if (method === 'patch') {
+        handler = createUpdateHandler(apiMetadata, endpointWithCollection, null, rules);
+        description = 'Update sub-resource';
+      } else if (method === 'delete') {
+        handler = createDeleteHandler(apiMetadata, endpointWithCollection);
+        description = 'Delete sub-resource';
+      } else {
+        console.warn(`    Warning: Unsupported method ${method.toUpperCase()} on sub-item ${endpoint.path}`);
+        continue;
+      }
+    } else if (method === 'get' && isItemEndpoint(endpoint.path)) {
+      // GET /resources/{id} - Get by ID
+      handler = createGetHandler(apiMetadata, endpointWithCollection);
+      description = 'Get resource by ID';
     } else if (method === 'patch' && isItemEndpoint(endpoint.path)) {
       // PATCH /resources/{id} - Update
       const smForEndpoint = stateMachine?.object?.toLowerCase() + 's' === collectionName
