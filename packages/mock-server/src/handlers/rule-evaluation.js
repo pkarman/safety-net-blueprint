@@ -44,9 +44,11 @@ export function resolveContextEntities(contextBindings, resource) {
     // Parse domain/resource format — collection name is the last path segment
     const collectionName = binding.entity.split('/').pop();
 
-    // Resolve the from path against resource fields + previously resolved entities (chaining)
+    // Resolve the from path against resource fields + previously resolved entities (chaining).
+    // from: accepts a bare dot-path string or a JSON Logic { var: "..." } expression (Decision 21).
+    const fromPath = typeof binding.from === 'object' && binding.from.var ? binding.from.var : binding.from;
     const lookupContext = { ...resource, ...resolved };
-    const entityId = resolvePath(lookupContext, binding.from);
+    const entityId = resolvePath(lookupContext, fromPath);
 
     if (!entityId) {
       if (binding.optional) {

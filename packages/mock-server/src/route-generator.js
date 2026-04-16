@@ -75,6 +75,17 @@ function extractParentParam(path) {
 }
 
 /**
+ * Derive the parent collection name from a sub-resource path.
+ * Returns the last non-param segment BEFORE the sub-resource segment.
+ * e.g., /intake/applications/{applicationId}/documents → 'applications'
+ */
+function deriveParentCollection(path, basePath) {
+  const resourcePath = basePath && path.startsWith(basePath) ? path.slice(basePath.length) : path;
+  const segments = resourcePath.split('/').filter(s => s && !s.startsWith('{'));
+  return segments.length >= 2 ? segments[segments.length - 2] : '';
+}
+
+/**
  * Create a GET handler for a singleton sub-resource.
  * Looks up the resource by parent field value (e.g., applicationId) rather than by its own id.
  */
@@ -246,12 +257,31 @@ export function registerRoutes(app, apiMetadata, baseUrl, stateMachine, rules, s
           continue;
         }
       } else {
-        // Sub-collection: /resources/{parentId}/subResources — inject parent ID into query/body
+        // Sub-collection: /resources/{parentId}/subResources
         if (method === 'get') {
-          const baseListHandler = createListHandler(apiMetadata, endpointWithCollection);
+          const parentCollection = deriveParentCollection(endpoint.path, apiMetadata.serverBasePath);
+          const pagination = apiMetadata.pagination || {};
           handler = (req, res) => {
-            req.query[parentField] = req.params[parentParam];
-            return baseListHandler(req, res);
+            try {
+              const parentId = req.params[parentParam];
+              // Verify parent exists before listing sub-resources
+              if (parentCollection) {
+                const { items: parentCheck } = findAll(parentCollection, { id: parentId }, { limit: 1 });
+                if (parentCheck.length === 0) {
+                  const label = capitalize(parentCollection.replace(/s$/, ''));
+                  return res.status(404).json({ code: 'NOT_FOUND', message: `${label} not found` });
+                }
+              }
+              // List sub-resources filtered by parent ID
+              // Note: req.query mutation does not work reliably in Express 5 (getter re-evaluates),
+              // so we call findAll directly rather than routing through createListHandler.
+              const limit = Math.min(parseInt(req.query.limit) || pagination.limitDefault || 25, pagination.limitMax || 100);
+              const offset = parseInt(req.query.offset) || 0;
+              const result = findAll(endpointWithCollection.collectionName, { [parentField]: parentId }, { limit, offset });
+              return res.json(result);
+            } catch (error) {
+              res.status(500).json({ code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', details: [{ message: error.message }] });
+            }
           };
           description = 'List sub-resources';
         } else if (method === 'post') {

@@ -339,8 +339,8 @@ function importRuleSet(csvData, existingDoc, ruleType) {
   const doc = { ...existingDoc };
   const ruleSets = [...(existingDoc.ruleSets || [])];
 
-  // Find existing ruleSet to preserve metadata
-  const existingIdx = ruleSets.findIndex(rs => rs.ruleType === ruleType);
+  // Find existing ruleSet to preserve metadata — match by id or ruleType (the YAML may use either)
+  const existingIdx = ruleSets.findIndex(rs => rs.id === ruleType || rs.ruleType === ruleType);
   const existingRuleSet = existingIdx >= 0 ? ruleSets[existingIdx] : {};
 
   const rules = csvData.data.map(row => {
@@ -358,9 +358,13 @@ function importRuleSet(csvData, existingDoc, ruleType) {
     return rule;
   });
 
+  // Ensure the ruleSet has an id: field as required by the schema.
+  // If the existing entry already has id:, the spread preserves it.
+  // If not (e.g., legacy entries using only ruleType:), set id from the ruleType.
+  const idField = existingRuleSet.id === undefined ? { id: ruleType } : {};
   const newRuleSet = {
     ...existingRuleSet,
-    ruleType,
+    ...idField,
     evaluation: existingRuleSet.evaluation || 'first-match-wins',
     rules,
   };

@@ -150,9 +150,11 @@ async function startMockServer(specDirs = null, seedDir = null) {
     app.post('/platform/events', (req, res) => {
       const event = req.body;
       if (!event?.type || !event?.specversion) {
-        return res.status(400).json({
-          code: 'BAD_REQUEST',
-          message: 'Request body must be a CloudEvents 1.0 envelope with specversion and type fields'
+        const missing = ['specversion', 'type'].filter(f => !event?.[f]);
+        return res.status(422).json({
+          code: 'VALIDATION_ERROR',
+          message: 'Request body must be a CloudEvents 1.0 envelope',
+          details: missing.map(f => ({ field: f, message: 'required' }))
         });
       }
       try {
