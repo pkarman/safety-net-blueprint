@@ -54,6 +54,14 @@ here support both direct and BFF-mediated topologies.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+This diagram reflects a **three-layer auth model**:
+
+- **Layer 1 — Identity Provider:** Authenticates credentials (password, MFA, certificates) and issues JWTs.
+- **Layer 2 — User Service:** Resolves authorization context (role, permissions, organizational scope) at login. Called once by the IdP; the result is embedded in the JWT.
+- **Layer 3 — Domain APIs:** Validate JWT signature and read claims at request time. No runtime calls to Layer 1 or 2.
+
+Each layer has a distinct responsibility. States can substitute components within a layer (e.g., swap the IdP vendor, replace JWT with session auth) without changing the other layers.
+
 ## What happens during authentication
 
 1. A user or service account presents credentials to the Identity Provider (IdP).
@@ -76,7 +84,7 @@ here support both direct and BFF-mediated topologies.
 4. For staff, the API filters returned data to the organizational units listed in the token's
    scope claims (counties, districts, programs, or state-defined equivalent).
 5. For applicants, the API filters returned data to the individual's own records (scoped by
-   personId).
+   userId).
 6. For operations involving Federal Tax Information, the actor identity from the token is
    captured in the audit log. (IRS Pub. 1075)
 
@@ -95,7 +103,7 @@ eligibility) must meet IRS Pub. 1075 safeguard requirements:
 | Weekly log review | Audit logs must be reviewed weekly |
 
 The User Service provides unique user identification. States must implement audit log archival
-independently — see [Known gaps](#known-gaps).
+independently — see [Capability coverage](#capability-coverage).
 
 ### NIST SP 800-53 / FedRAMP
 
@@ -109,15 +117,16 @@ independently — see [Known gaps](#known-gaps).
 
 ### User
 
-The central identity record. Stored in the User Service; linked to domain entities via stable
-identifiers.
+The central identity record. Stored in the User Service. Contains identity and authorization
+data only — no links to domain entities. Domain entities that need to associate with a user hold
+a `userId` reference pointing back to User Service. This matches the pattern used by IBM Cúram
+(`ConcernRole.userAccount`), ServiceNow (`Task.assigned_to`), and Salesforce (`Contact.OwnerId`).
 
 Key fields:
-- `userId` — stable UUID; the canonical identifier used in JWT claims and event `authid` fields
-- `role` — the user's authorization role
-- `scope` — organizational units the user can access (counties, districts, programs, or custom)
-- `personId` — links an applicant user to their record in the Intake domain
-- `caseWorkerId` — links a staff user to their record in the Workflow domain (optional)
+- `userId` — stable UUID; the canonical identifier used in JWT claims and event `authid` fields.
+  Same value as the `id` field on the User resource.
+- `roles` — Role object containing `name` (RoleType) and `permissions` (array of
+  `{resource}:{action}` strings, e.g., `applications:read`)
 
 All major platforms have an equivalent user identity concept with a stable, non-email identifier.
 
@@ -127,10 +136,12 @@ The minimal authorization context embedded in a JWT for API enforcement. Derived
 User Service data; not a persisted entity.
 
 Key fields:
-- `userId` — matches User.userId; the value carried in the `authid` event extension attribute
-- `role` — the user's role
-- `permissions` — array of `{resource}:{action}` strings (e.g., `applications:read`)
-- `counties` — organizational scope (state-customizable; see [Customization](#customization))
+- `userId` — matches `User.id`; the value carried in the `authid` event extension attribute
+- `roles` — Role object containing `name` (RoleType) and `permissions` (array of
+  `{resource}:{action}` strings, e.g., `applications:read`)
+
+Organizational scope claims (`counties`, `districts`, `programs`, etc.) are not part of the
+base BackendAuthContext. States add them via overlay — see [Customization](#customization).
 
 See [Decision 1](#decision-1-oauth-scope-granularity) for how OAuth scopes relate to this model.
 
@@ -148,7 +159,7 @@ fields (`availableModules`, boolean action flags) as a starting point.
 ```
 state_admin
     │
-    ├── org_admin (county_admin in base spec)
+    ├── county_admin
     │       │
     │       └── supervisor
     │               │
@@ -167,7 +178,7 @@ States extend the `RoleType` enum via overlay to add state-specific roles.
 | `applicant` | applications:read/create/update, persons:read, households:read | Own records (by personId) |
 | `case_worker` | applications:*, persons:*, households:*, incomes:* | Assigned organizational unit(s) |
 | `supervisor` | case_worker + applications:approve, persons:read:pii | Multiple organizational units |
-| `org_admin` | supervisor + users:create/update, applications:delete | Assigned organizational unit |
+| `county_admin` | supervisor + users:create/update, applications:delete | Assigned organizational unit |
 | `state_admin` | All permissions | All organizational units |
 | `partner_readonly` | applications:read, persons:read | Per agreement |
 
@@ -275,8 +286,9 @@ States can override the following via overlay:
   States not using JWT must also remove `/token/claims/{sub}` from the User Service spec;
   domain APIs will need runtime authorization calls without embedded JWT claims.
 - **BackendAuthContext scope fields** — Add state-specific organizational scope claims
-  (`districts`, `regions`, `programs`) or remove `counties`. Example: Colorado adds
-  `districts` for district-based scoping.
+  (`counties`, `districts`, `regions`, `programs`). The base BackendAuthContext has no scope
+  fields — states define what they need via overlay. Example: California adds `counties`; a
+  district-based state adds `districts` instead.
 - **RoleType enum** — Extend with state-specific roles (e.g., `regional_coordinator`). The
   User Service implementation computes permissions for extended roles.
 - **OAuth scopes** — Define additional scopes at the IdP level for state-specific integrations.
@@ -289,7 +301,7 @@ States can override the following via overlay:
 |---|---|
 | User Service API | `packages/contracts/users-openapi.yaml` |
 | Shared security schemes | `packages/contracts/components/auth.yaml` |
-| JWT claim schemas | `packages/contracts/components/common.yaml` |
+| JWT claim schemas | `packages/contracts/components/auth.yaml` |
 | Frontend auth context | `packages/contracts/users-openapi.yaml` (`FrontendAuthContext`, `UiPermissions`) |
 | CloudEvents envelope pattern | `packages/contracts/patterns/api-patterns.yaml` |
 
