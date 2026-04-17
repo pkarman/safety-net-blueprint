@@ -52,7 +52,7 @@ ruleSets:
             - application_review
         action:
           createResource:
-            entity: intake/interviews
+            entity: intake/applications/interview
             fields:
               applicationId:
                 var: task.subjectId
@@ -98,7 +98,7 @@ ruleSets:
             - var: application.programs
         action:
           createResource:
-            entity: intake/application-documents
+            entity: intake/applications/documents
             fields:
               applicationId:
                 var: application.id
@@ -112,7 +112,7 @@ ruleSets:
             - var: application.programs
         action:
           createResource:
-            entity: intake/application-documents
+            entity: intake/applications/documents
             fields:
               applicationId:
                 var: application.id
@@ -126,7 +126,7 @@ ruleSets:
             - var: application.programs
         action:
           createResource:
-            entity: intake/application-documents
+            entity: intake/applications/documents
             fields:
               applicationId:
                 var: application.id
@@ -140,7 +140,7 @@ ruleSets:
             - var: application.programs
         action:
           createResource:
-            entity: intake/application-documents
+            entity: intake/applications/documents
             fields:
               applicationId:
                 var: application.id
@@ -155,7 +155,7 @@ ruleSets:
         condition: true
         action:
           appendToArray:
-            entity: intake/application-members
+            entity: intake/applications/members
             idFrom: this.data.memberId
             field: verifications
             value:
@@ -184,7 +184,7 @@ ruleSets:
                 - inconclusive
         action:
           createResource:
-            entity: intake/application-documents
+            entity: intake/applications/documents
             fields:
               applicationId:
                 var: this.data.applicationId
@@ -206,7 +206,7 @@ ruleSets:
             - interview
         action:
           appendToArray:
-            entity: intake/interviews
+            entity: intake/applications/interview
             idFrom: this.data.subjectId
             field: appointments
             value:
@@ -219,28 +219,36 @@ ruleSets:
     "on": document-management.document.verified
     evaluation: first-match-wins
     context:
-      - as: document
-        entity: intake/application-documents
+      - as: applicationDocument
+        entity: intake/applications/documents
         from:
-          var: data.documentId
+          var: data.subjectId
         optional: true
     rules:
       - id: verify-application-document
         order: 1
         condition:
-          "!=":
-            - var: document.id
-            - null
+          "==":
+            - var: this.data.subjectType
+            - application-document
         action:
           triggerTransition:
-            entity: intake/application-documents
-            idFrom: document.id
+            entity: intake/applications/documents
+            idFrom: applicationDocument.id
             transition: verify
+          appendToArray:
+            entity: intake/applications/documents
+            idFrom: applicationDocument.id
+            field: evidence
+            value:
+              var: this.subject
         description: |
-          Transition the ApplicationDocument to verified when document-management reports
-          successful verification. The optional binding means rule set evaluation continues
-          even if the document ID in the event does not match an intake ApplicationDocument
-          (e.g., the document belongs to a different domain's checklist).
+          Transition the ApplicationDocument to verified and record the document ID in its
+          evidence list when document-management reports successful verification (Decision 15).
+          Only fires when the document's subjectType is "application-document", ensuring
+          documents uploaded in document-management without linking to an ApplicationDocument
+          (via subjectType/subjectId) are silently ignored — analogous to an appointment
+          scheduled without linking to an interview.
   - id: eligibility-determination-write-back
     "on": eligibility.determination.completed
     evaluation: first-match-wins
@@ -250,7 +258,7 @@ ruleSets:
         condition: true
         action:
           appendToArray:
-            entity: intake/application-members
+            entity: intake/applications/members
             idFrom: this.data.memberId
             field: programDeterminations
             value:

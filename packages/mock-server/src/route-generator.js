@@ -14,6 +14,7 @@ import { createMetricsListHandler, createMetricsGetHandler } from './handlers/me
 import { findSlaTypes } from './sla-loader.js';
 import { findAll, update } from './database-manager.js';
 import { emitEvent } from './emit-event.js';
+import { deriveCollectionName } from './collection-utils.js';
 
 /**
  * Determine if a path is a flat collection endpoint (no path parameters).
@@ -168,43 +169,6 @@ function convertPathFormat(path) {
   return path.replace(/\{([^}]+)\}/g, ':$1');
 }
 
-/**
- * Derive the database collection name from an endpoint path.
- * Returns the last non-parameter segment after stripping the server base path.
- * For sub-resources this is the child collection, not the parent.
- * Singular segments are pluralized (e.g. "interview" → "interviews") to match
- * the convention used by the rules engine when creating those resources.
- *
- * E.g., "/intake/applications/{applicationId}/documents/{documentId}"
- *        with basePath "/intake" → "documents"
- *       "/intake/applications/{applicationId}/interview"
- *        with basePath "/intake" → "interviews"
- *
- * @param {string} path - OpenAPI path (possibly prefixed with serverBasePath)
- * @param {string} [basePath] - Server base path to strip (e.g., "/intake")
- * @returns {string} Collection name for database operations
- */
-function deriveCollectionName(path, basePath) {
-  const resourcePath = basePath && path.startsWith(basePath)
-    ? path.slice(basePath.length)
-    : path;
-  const segments = resourcePath.split('/').filter(s => s && !s.startsWith('{'));
-  const lastSegment = segments[segments.length - 1] || '';
-
-  // Sub-collection paths (2+ non-param segments, last is plural) are prefixed with the parent
-  // resource singular to avoid cross-domain DB collection name collisions.
-  // e.g., /applications/{id}/documents → 'application-documents'
-  // Singleton sub-resources (singular last segment) use simple pluralization.
-  // e.g., /applications/{id}/interview → 'interviews'
-  if (segments.length >= 2 && lastSegment.endsWith('s')) {
-    const parentSegment = segments[segments.length - 2];
-    const parentSingular = parentSegment.endsWith('s') ? parentSegment.slice(0, -1) : parentSegment;
-    return `${parentSingular}-${lastSegment}`;
-  }
-
-  // Pluralize singleton segment names so they match the DB collection convention
-  return lastSegment && !lastSegment.endsWith('s') ? `${lastSegment}s` : lastSegment;
-}
 
 /**
  * Register routes for an API specification

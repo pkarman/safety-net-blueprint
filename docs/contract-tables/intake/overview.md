@@ -105,7 +105,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | task.taskType = "application_review" | createResource: {"entity":"intake/interviews","fields":{"applicationId":{"var":"task.subjectId"}}} | — |
+| 1 | task.taskType = "application_review" | createResource: {"entity":"intake/applications/interview","fields":{"applicationId":{"var":"task.subjectId"}}} | — |
 
 ### application-submitted-data-exchange
 
@@ -121,10 +121,10 @@ Evaluation strategy: **all-match**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | "snap" in application.programs | createResource: {"entity":"intake/application-documents","fields":{"applicationId":{"var":"application.id"},"category":"income"}} | — |
-| 2 | "snap" in application.programs | createResource: {"entity":"intake/application-documents","fields":{"applicationId":{"var":"application.id"},"category":"identity"}} | — |
-| 3 | "snap" in application.programs | createResource: {"entity":"intake/application-documents","fields":{"applicationId":{"var":"application.id"},"category":"residency"}} | — |
-| 4 | "medicaid" in application.programs | createResource: {"entity":"intake/application-documents","fields":{"applicationId":{"var":"application.id"},"category":"identity"}} | — |
+| 1 | "snap" in application.programs | createResource: {"entity":"intake/applications/documents","fields":{"applicationId":{"var":"application.id"},"category":"income"}} | — |
+| 2 | "snap" in application.programs | createResource: {"entity":"intake/applications/documents","fields":{"applicationId":{"var":"application.id"},"category":"identity"}} | — |
+| 3 | "snap" in application.programs | createResource: {"entity":"intake/applications/documents","fields":{"applicationId":{"var":"application.id"},"category":"residency"}} | — |
+| 4 | "medicaid" in application.programs | createResource: {"entity":"intake/applications/documents","fields":{"applicationId":{"var":"application.id"},"category":"identity"}} | — |
 
 ### verification-result-write-back
 
@@ -132,7 +132,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | true | appendToArray: {"entity":"intake/application-members","idFrom":"this.data.memberId","field":"verifications","value":{"type":{"var":"this.data.verificationType"},"status":{"var":"this.data.result"},"source":{"var":"this.data.serviceType"},"checkedAt":{"var":"this.time"}}} | — |
+| 1 | true | appendToArray: {"entity":"intake/applications/members","idFrom":"this.data.memberId","field":"verifications","value":{"type":{"var":"this.data.verificationType"},"status":{"var":"this.data.result"},"source":{"var":"this.data.serviceType"},"checkedAt":{"var":"this.time"}}} | — |
 
 ### fdsh-inconclusive-citizenship-document
 
@@ -140,7 +140,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | this.data.serviceType = "fdsh" and this.data.result = "inconclusive" | createResource: {"entity":"intake/application-documents","fields":{"applicationId":{"var":"this.data.applicationId"},"memberId":{"var":"this.data.memberId"},"category":"citizenship"}} | — |
+| 1 | this.data.serviceType = "fdsh" and this.data.result = "inconclusive" | createResource: {"entity":"intake/applications/documents","fields":{"applicationId":{"var":"this.data.applicationId"},"memberId":{"var":"this.data.memberId"},"category":"citizenship"}} | — |
 
 ### appointment-scheduled-link-to-interview
 
@@ -148,7 +148,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | this.data.subjectType = "interview" | appendToArray: {"entity":"intake/interviews","idFrom":"this.data.subjectId","field":"appointments","value":{"var":"this.subject"}} | — |
+| 1 | this.data.subjectType = "interview" | appendToArray: {"entity":"intake/applications/interview","idFrom":"this.data.subjectId","field":"appointments","value":{"var":"this.subject"}} | — |
 
 ### document-verified-write-back
 
@@ -156,7 +156,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | document.id != null | triggerTransition: {"entity":"intake/application-documents","idFrom":"document.id","transition":"verify"} | — |
+| 1 | this.data.subjectType = "application-document" | triggerTransition: {"entity":"intake/applications/documents","idFrom":"applicationDocument.id","transition":"verify"} | — |
 
 ### eligibility-determination-write-back
 
@@ -164,7 +164,7 @@ Evaluation strategy: **first-match-wins**
 
 | # | Condition | Action | Fallback |
 |---|-----------|--------|----------|
-| 1 | true | appendToArray: {"entity":"intake/application-members","idFrom":"this.data.memberId","field":"programDeterminations","value":{"program":{"var":"this.data.program"},"outcome":{"var":"this.data.outcome"},"determinedAt":{"var":"this.data.determinedAt"}}} | — |
+| 1 | true | appendToArray: {"entity":"intake/applications/members","idFrom":"this.data.memberId","field":"programDeterminations","value":{"program":{"var":"this.data.program"},"outcome":{"var":"this.data.outcome"},"determinedAt":{"var":"this.data.determinedAt"}}} | — |
 
 ### status-transition
 

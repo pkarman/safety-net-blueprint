@@ -25,7 +25,7 @@ properties:
 
   resource:
     type: string
-    pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+    pattern: "^[a-z][a-z0-9-]*(/[a-z][a-z0-9-]*)+$"
     description: >
       The calling resource type in domain/resource format (e.g., workflow/tasks).
       Used by validate-rules.js to resolve schema properties for from-field validation.
@@ -56,7 +56,7 @@ $defs:
     properties:
       entity:
         type: string
-        pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+        pattern: "^[a-z][a-z0-9-]*(/[a-z][a-z0-9-]*)+$"
         description: Target entity in domain/resource format (e.g., workflow/tasks).
       fields:
         type: object
@@ -76,8 +76,8 @@ $defs:
     properties:
       entity:
         type: string
-        pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
-        description: Target entity in domain/resource format (e.g., intake/application-members).
+        pattern: "^[a-z][a-z0-9-]*(/[a-z][a-z0-9-]*)+$"
+        description: Target entity in domain/resource format (e.g., intake/applications/documents).
       idFrom:
         type: string
         description: >
@@ -101,7 +101,7 @@ $defs:
     properties:
       entity:
         type: string
-        pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+        pattern: "^[a-z][a-z0-9-]*(/[a-z][a-z0-9-]*)+$"
         description: Target entity in domain/resource format (e.g., intake/applications).
       idFrom:
         type: string
@@ -132,7 +132,7 @@ $defs:
         description: Alias used to reference this entity in rule conditions (e.g., "application").
       entity:
         type: string
-        pattern: "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+        pattern: "^[a-z][a-z0-9-]*(/[a-z][a-z0-9-]*)+$"
         description: >
           Source entity in domain/resource format (e.g., intake/applications).
           Must match an API resource path discoverable in the contracts directory.

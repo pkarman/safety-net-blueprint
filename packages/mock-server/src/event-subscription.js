@@ -20,6 +20,7 @@ import { executeTransition } from './state-machine-runner.js';
 import { applyEffects } from './state-machine-engine.js';
 import { processRuleEvaluations } from './handlers/rule-evaluation.js';
 import { emitEvent } from './emit-event.js';
+import { deriveCollectionName } from './collection-utils.js';
 
 const FULL_TYPE_PREFIX = 'org.codeforamerica.safety-net-blueprint.';
 
@@ -38,13 +39,14 @@ function eventTypeMatches(eventType, onValue) {
 }
 
 /**
- * Find the state machine for a domain/collection entity reference.
- * @param {string} entity - "domain/collection" format (e.g., "workflow/tasks")
+ * Find the state machine for a domain/resource entity reference.
+ * @param {string} entity - "domain/resource[/sub-resource]" format (e.g., "intake/applications/documents")
  * @param {Array} allStateMachines - from discoverStateMachines()
  * @returns {Object|null} The state machine contract, or null
  */
 function findStateMachineForEntity(entity, allStateMachines) {
-  const [domainName, collectionName] = entity.split('/');
+  const domainName = entity.split('/')[0];
+  const collectionName = deriveCollectionName(entity, domainName);
   const match = allStateMachines.find(sm => {
     if (sm.domain !== domainName) return false;
     // Convert PascalCase object name to kebab-plural: ApplicationDocument → application-documents

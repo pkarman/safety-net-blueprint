@@ -5,6 +5,7 @@
  */
 
 import jsonLogic from 'json-logic-js';
+import { deriveCollectionName } from './collection-utils.js';
 
 /**
  * Create a new resource in the specified domain/collection.
@@ -35,9 +36,8 @@ function createResource(actionValue, resource, deps) {
     return;
   }
 
-  const parts = entity.split('/');
-  const domainName = parts[0];
-  const collectionName = parts[1];
+  const domainName = entity.split('/')[0];
+  const collectionName = deriveCollectionName(entity, domainName);
 
   // Resolve field values — literals pass through; objects are JSON Logic expressions
   const resolvedFields = {};
@@ -134,7 +134,7 @@ function triggerTransition(actionValue, resource, deps) {
     return;
   }
 
-  const collectionName = entity.split('/')[1];
+  const collectionName = deriveCollectionName(entity, entity.split('/')[0]);
 
   const { success, error } = deps.executeTransition({
     resourceName: collectionName,
@@ -167,7 +167,7 @@ function appendToArray(actionValue, resource, deps) {
     return;
   }
 
-  const collectionName = entity.split('/')[1];
+  const collectionName = deriveCollectionName(entity, entity.split('/')[0]);
   const entityId = deps.resolvePath?.(deps.context || {}, idFrom);
   if (!entityId) {
     console.error(`appendToArray: "${idFrom}" resolved to no value in rule context`);

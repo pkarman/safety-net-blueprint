@@ -566,6 +566,16 @@ components:
               type: string
               format: date-time
               readOnly: true
+            evidence:
+              type: array
+              description: >
+                IDs of documents in document-management that satisfy this checklist item.
+                Populated by the document-verified-write-back rule when a verified document
+                carries subjectType "application-document" and subjectId matching this record.
+              readOnly: true
+              items:
+                type: string
+                format: uuid
 
     ApplicationDocumentCreate:
       allOf:
