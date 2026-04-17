@@ -38,17 +38,14 @@ export function evaluateRuleSet(ruleSet, contextData) {
     return { matched: false };
   }
 
-  // Sort rules by order to ensure correct evaluation sequence
   const sortedRules = [...ruleSet.rules].sort((a, b) => a.order - b.order);
 
   for (const rule of sortedRules) {
     let conditionMet = false;
 
     if (rule.condition === true) {
-      // Catch-all rule — always matches
       conditionMet = true;
     } else {
-      // Evaluate JSON Logic condition
       try {
         conditionMet = jsonLogic.apply(rule.condition, contextData);
       } catch (err) {
@@ -68,4 +65,43 @@ export function evaluateRuleSet(ruleSet, contextData) {
   }
 
   return { matched: false };
+}
+
+/**
+ * Evaluate a ruleSet against context data. Uses all-match semantics —
+ * all rules whose conditions match are collected and returned.
+ * @param {Object} ruleSet - RuleSet definition with rules array
+ * @param {Object} contextData - Context object built by buildRuleContext
+ * @returns {Array<{ ruleId: string, action: Object, fallbackAction: Object|null }>}
+ */
+export function evaluateAllMatchRuleSet(ruleSet, contextData) {
+  if (!ruleSet || !ruleSet.rules) return [];
+
+  const sortedRules = [...ruleSet.rules].sort((a, b) => a.order - b.order);
+  const matched = [];
+
+  for (const rule of sortedRules) {
+    let conditionMet = false;
+
+    if (rule.condition === true) {
+      conditionMet = true;
+    } else {
+      try {
+        conditionMet = jsonLogic.apply(rule.condition, contextData);
+      } catch (err) {
+        console.warn(`Rule "${rule.id}" condition evaluation failed: ${err.message}`);
+        continue;
+      }
+    }
+
+    if (conditionMet) {
+      matched.push({
+        ruleId: rule.id,
+        action: rule.action,
+        fallbackAction: rule.fallbackAction || null
+      });
+    }
+  }
+
+  return matched;
 }

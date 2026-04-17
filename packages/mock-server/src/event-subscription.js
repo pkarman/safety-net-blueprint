@@ -13,7 +13,7 @@
 
 import { eventBus } from './event-bus.js';
 import { create, update, findAll } from './database-manager.js';
-import { buildRuleContext, evaluateRuleSet, resolvePath } from './rules-engine.js';
+import { buildRuleContext, evaluateRuleSet, evaluateAllMatchRuleSet, resolvePath } from './rules-engine.js';
 import { resolveContextEntities } from './handlers/rule-evaluation.js';
 import { executeActions } from './action-handlers.js';
 import { executeTransition } from './state-machine-runner.js';
@@ -133,15 +133,20 @@ export function registerEventSubscriptions(allRules, allStateMachines, allSlaTyp
         // Build rule context: this = event envelope, plus resolved entities
         const ruleContext = buildRuleContext(event, resolvedEntities);
 
-        // Evaluate rules
-        const result = evaluateRuleSet(ruleSet, ruleContext);
-        if (!result.matched) continue;
-
         // Build rich deps for platform actions
         const deps = buildPlatformDeps(ruleContext, allRules, allStateMachines, allSlaTypes);
 
-        // Execute actions
-        executeActions(result.action, event, deps, result.fallbackAction);
+        // Evaluate rules and execute actions
+        if (ruleSet.evaluation === 'all-match') {
+          const results = evaluateAllMatchRuleSet(ruleSet, ruleContext);
+          for (const result of results) {
+            executeActions(result.action, event, deps, result.fallbackAction);
+          }
+        } else {
+          const result = evaluateRuleSet(ruleSet, ruleContext);
+          if (!result.matched) continue;
+          executeActions(result.action, event, deps, result.fallbackAction);
+        }
       } catch (e) {
         console.error(`Event subscription "${ruleSet.id}" failed for event "${event.type}":`, e.message);
       }

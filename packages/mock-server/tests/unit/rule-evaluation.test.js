@@ -213,3 +213,128 @@ test('processRuleEvaluations — calling resource fields accessible as "this.*" 
   processRuleEvaluations([{ ruleType: 'assignment' }], task, rules, 'workflow');
   assert.strictEqual(task.queueId, 'q-snap'); // isExpedited true → snap-intake
 });
+
+// =============================================================================
+// JSON Logic from: form — {var: "path"} accepted alongside bare string
+// =============================================================================
+
+test('processRuleEvaluations — JSON Logic {var: "..."} from: resolves entity correctly', () => {
+  clearAll('applications');
+  clearAll('tasks');
+  seedQueues();
+
+  insertResource('applications', { id: 'app-1', programs: ['snap'] });
+  const task = { id: 'task-1', subjectId: 'app-1', queueId: null };
+
+  const rules = makeRules(
+    [{ as: 'application', entity: 'intake/applications', from: { var: 'subjectId' } }],
+    { in: ['snap', { var: 'application.programs' }] },
+    { assignToQueue: 'snap-intake' }
+  );
+
+  processRuleEvaluations([{ ruleType: 'assignment' }], task, rules, 'workflow');
+  assert.strictEqual(task.queueId, 'q-snap');
+});
+
+// =============================================================================
+// Collection binding — entity absent, from resolves to a value bound directly
+// =============================================================================
+
+test('processRuleEvaluations — collection binding binds array value without entity lookup', () => {
+  clearAll('tasks');
+  seedQueues();
+
+  // members is an embedded array on the task — no separate entity to fetch
+  const task = {
+    id: 'task-1',
+    members: [{ id: 'm-1', programs: ['snap'] }, { id: 'm-2', programs: ['medicaid'] }],
+    queueId: null
+  };
+
+  const rules = [
+    {
+      domain: 'workflow',
+      ruleSets: [
+        {
+          id: 'test-collection-binding',
+          ruleType: 'assignment',
+          evaluation: 'first-match-wins',
+          context: [{ as: 'members', from: { var: 'members' } }],
+          rules: [
+            {
+              id: 'has-snap-member',
+              order: 1,
+              condition: { some: [{ var: 'members' }, { in: ['snap', { var: 'programs' }] }] },
+              action: { assignToQueue: 'snap-intake' }
+            },
+            { id: 'catch-all', order: 2, condition: true, action: { assignToQueue: 'general-intake' } }
+          ]
+        }
+      ]
+    }
+  ];
+
+  processRuleEvaluations([{ ruleType: 'assignment' }], task, rules, 'workflow');
+  assert.strictEqual(task.queueId, 'q-snap');
+});
+
+// =============================================================================
+// all-match evaluation — all matching rules fire
+// =============================================================================
+
+test('processRuleEvaluations — all-match fires all matching rules', () => {
+  clearAll('tasks');
+
+  // Both snap and medicaid rules match. With all-match, both fire in order —
+  // rule 2 overwrites rule 1 so final priority is 'high'.
+  const task = { id: 'task-1', programs: ['snap', 'medicaid'], priority: null };
+
+  const rules = [
+    {
+      domain: 'workflow',
+      ruleSets: [
+        {
+          id: 'test-all-match',
+          ruleType: 'priority',
+          evaluation: 'all-match',
+          rules: [
+            { id: 'snap-rule', order: 1, condition: { in: ['snap', { var: 'this.programs' }] }, action: { setPriority: 'expedited' } },
+            { id: 'medicaid-rule', order: 2, condition: { in: ['medicaid', { var: 'this.programs' }] }, action: { setPriority: 'high' } }
+          ]
+        }
+      ]
+    }
+  ];
+
+  processRuleEvaluations([{ ruleType: 'priority' }], task, rules, 'workflow');
+  // Both rules fired: expedited then high → final value is 'high'
+  assert.strictEqual(task.priority, 'high');
+});
+
+test('processRuleEvaluations — first-match-wins stops at first matching rule', () => {
+  clearAll('tasks');
+
+  // Same rules as above, but first-match-wins: only rule 1 fires → 'expedited'
+  const task = { id: 'task-1', programs: ['snap', 'medicaid'], priority: null };
+
+  const rules = [
+    {
+      domain: 'workflow',
+      ruleSets: [
+        {
+          id: 'test-first-match',
+          ruleType: 'priority',
+          evaluation: 'first-match-wins',
+          rules: [
+            { id: 'snap-rule', order: 1, condition: { in: ['snap', { var: 'this.programs' }] }, action: { setPriority: 'expedited' } },
+            { id: 'medicaid-rule', order: 2, condition: { in: ['medicaid', { var: 'this.programs' }] }, action: { setPriority: 'high' } }
+          ]
+        }
+      ]
+    }
+  ];
+
+  processRuleEvaluations([{ ruleType: 'priority' }], task, rules, 'workflow');
+  // Only snap-rule fired → 'expedited'
+  assert.strictEqual(task.priority, 'expedited');
+});
