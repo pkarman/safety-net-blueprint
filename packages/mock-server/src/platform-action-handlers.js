@@ -188,8 +188,73 @@ function appendToArray(actionValue, resource, deps) {
   deps.dbUpdate(collectionName, entityId, { [field]: [...currentArray, resolvedValue] });
 }
 
+/**
+ * Iterate over a collection and execute an inner action for each item that
+ * satisfies an optional filter condition. The item is bound to `as` in the
+ * rule context for both the filter and the inner action's field resolution.
+ *
+ * @param {Object} actionValue - { in: <JSON Logic>, as: string, filter?: <JSON Logic>,
+ *                                  createResource?: {...}, triggerTransition?: {...} }
+ * @param {Object} resource    - The current "this" context
+ * @param {Object} deps        - Same deps as createResource/triggerTransition
+ */
+function forEach(actionValue, resource, deps) {
+  const { in: inExpr, as: alias, filter, createResource: crValue, triggerTransition: ttValue } = actionValue || {};
+
+  if (!inExpr || !alias) {
+    console.error('forEach: missing required fields "in" or "as"');
+    return;
+  }
+
+  if (!crValue && !ttValue) {
+    console.error('forEach: missing inner action (createResource or triggerTransition)');
+    return;
+  }
+
+  // Resolve the collection from the rule context
+  const ctx = deps.context || {};
+  let collection;
+  try {
+    collection = jsonLogic.apply(inExpr, ctx);
+  } catch (err) {
+    console.error(`forEach: failed to resolve "in" expression: ${err.message}`);
+    return;
+  }
+
+  if (!Array.isArray(collection)) {
+    console.warn(`forEach: "in" expression resolved to a non-array value — skipping`);
+    return;
+  }
+
+  for (const item of collection) {
+    // Bind the item to the alias in the context for filter and field resolution
+    const itemCtx = { ...ctx, [alias]: item };
+
+    // Apply per-item filter if present
+    if (filter !== undefined) {
+      let matches;
+      try {
+        matches = jsonLogic.apply(filter, itemCtx);
+      } catch (err) {
+        console.warn(`forEach: filter evaluation failed for item: ${err.message}`);
+        continue;
+      }
+      if (!matches) continue;
+    }
+
+    // Execute the inner action with item-scoped context
+    const itemDeps = { ...deps, context: itemCtx };
+    if (crValue) {
+      createResource(crValue, resource, itemDeps);
+    } else if (ttValue) {
+      triggerTransition(ttValue, resource, itemDeps);
+    }
+  }
+}
+
 export const platformActionRegistry = new Map([
   ['createResource', createResource],
   ['triggerTransition', triggerTransition],
-  ['appendToArray', appendToArray]
+  ['appendToArray', appendToArray],
+  ['forEach', forEach]
 ]);

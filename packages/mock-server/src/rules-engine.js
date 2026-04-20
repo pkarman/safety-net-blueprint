@@ -38,17 +38,14 @@ export function evaluateRuleSet(ruleSet, contextData) {
     return { matched: false };
   }
 
-  // Sort rules by order to ensure correct evaluation sequence
   const sortedRules = [...ruleSet.rules].sort((a, b) => a.order - b.order);
 
   for (const rule of sortedRules) {
     let conditionMet = false;
 
     if (rule.condition === true) {
-      // Catch-all rule — always matches
       conditionMet = true;
     } else {
-      // Evaluate JSON Logic condition
       try {
         conditionMet = jsonLogic.apply(rule.condition, contextData);
       } catch (err) {

@@ -5,7 +5,7 @@
 
 import { findAll, findById } from '../database-manager.js';
 import { findRuleSet } from '../rules-loader.js';
-import { buildRuleContext, evaluateRuleSet, resolvePath } from '../rules-engine.js';
+import { buildRuleContext, evaluateRuleSet, evaluateAllMatchRuleSet, resolvePath } from '../rules-engine.js';
 import { executeActions } from '../action-handlers.js';
 import { deriveCollectionName } from '../collection-utils.js';
 
@@ -40,45 +40,71 @@ export function resolveContextEntities(contextBindings, resource) {
   const resolved = {};
 
   for (const binding of contextBindings || []) {
-    if (typeof binding !== 'object' || !binding.as || !binding.entity || !binding.from) continue;
+    if (typeof binding !== 'object' || !binding.as || !binding.from) continue;
 
-    // Derive DB collection name from entity path (e.g., intake/applications/documents → application-documents)
-    const collectionName = deriveCollectionName(binding.entity, binding.entity.split('/')[0]);
+    // Extract dot-path from from field (string or JSON Logic {var: "path"} form)
+    const fromPath = typeof binding.from === 'string'
+      ? binding.from
+      : (typeof binding.from?.var === 'string' ? binding.from.var : null);
+
+    if (fromPath === null) {
+      console.warn(`Context binding "${binding.as}": complex JSON Logic "from" is not supported — skipping binding`);
+      continue;
+    }
 
     // Resolve the from path against resource fields + previously resolved entities (chaining).
-    // from: accepts a bare dot-path string or a JSON Logic { var: "..." } expression (Decision 21).
-    const fromPath = typeof binding.from === 'object' && binding.from.var ? binding.from.var : binding.from;
     const lookupContext = { ...resource, ...resolved };
-    const entityId = resolvePath(lookupContext, fromPath);
+    const fromValue = resolvePath(lookupContext, fromPath);
 
-    if (!entityId) {
-      if (binding.optional) {
-        console.warn(
-          `Context binding "${binding.as}": "${binding.from}" resolved to no value — skipping binding (optional)`
+    if (binding.entity) {
+      // Entity binding — fromValue is an ID; fetch the entity by that ID
+      const collectionName = binding.entity.split('/').pop();
+
+      if (!fromValue) {
+        if (binding.optional) {
+          console.warn(
+            `Context binding "${binding.as}": "${fromPath}" resolved to no value — skipping binding (optional)`
+          );
+          continue;
+        }
+        console.error(
+          `Context binding "${binding.as}": "${fromPath}" resolved to no value — skipping rule set`
         );
-        continue;
+        return null;
       }
-      console.error(
-        `Context binding "${binding.as}": "${binding.from}" resolved to no value — skipping rule set`
-      );
-      return null;
-    }
 
-    const entity = findById(collectionName, entityId);
-    if (!entity) {
-      if (binding.optional) {
-        console.warn(
-          `Context binding "${binding.as}": "${binding.entity}" with id "${entityId}" not found — skipping binding (optional)`
+      const entity = findById(collectionName, fromValue);
+      if (!entity) {
+        if (binding.optional) {
+          console.warn(
+            `Context binding "${binding.as}": "${binding.entity}" with id "${fromValue}" not found — skipping binding (optional)`
+          );
+          continue;
+        }
+        console.error(
+          `Context binding "${binding.as}": "${binding.entity}" with id "${fromValue}" not found — skipping rule set`
         );
-        continue;
+        return null;
       }
-      console.error(
-        `Context binding "${binding.as}": "${binding.entity}" with id "${entityId}" not found — skipping rule set`
-      );
-      return null;
-    }
 
-    resolved[binding.as] = entity;
+      resolved[binding.as] = entity;
+    } else {
+      // Collection binding — fromValue is bound directly (no entity lookup)
+      if (fromValue === undefined || fromValue === null) {
+        if (binding.optional) {
+          console.warn(
+            `Context binding "${binding.as}": "${fromPath}" resolved to no value — skipping binding (optional)`
+          );
+          continue;
+        }
+        console.error(
+          `Context binding "${binding.as}": "${fromPath}" resolved to no value — skipping rule set`
+        );
+        return null;
+      }
+
+      resolved[binding.as] = fromValue;
+    }
   }
 
   return resolved;
@@ -106,10 +132,17 @@ export function processRuleEvaluations(pendingRuleEvaluations, resource, rules, 
     if (resolvedEntities === null) continue; // required entity not found — skip rule set
 
     const contextData = buildRuleContext(resource, resolvedEntities);
-    const result = evaluateRuleSet(ruleSet, contextData);
 
-    if (result.matched) {
-      executeActions(result.action, resource, deps, result.fallbackAction);
+    if (ruleSet.evaluation === 'all-match') {
+      const results = evaluateAllMatchRuleSet(ruleSet, contextData);
+      for (const result of results) {
+        executeActions(result.action, resource, deps, result.fallbackAction);
+      }
+    } else {
+      const result = evaluateRuleSet(ruleSet, contextData);
+      if (result.matched) {
+        executeActions(result.action, resource, deps, result.fallbackAction);
+      }
     }
   }
 }
